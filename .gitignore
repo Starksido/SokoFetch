@@ -1,0 +1,31 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.jks
+*.keystore
+key.properties
+firebase-service-account.json
+
+# Contains plaintext keys — keep out of version control
+Soko Fetch Backend commands.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# OS / sync clients
+desktop.ini
+Thumbs.db
+.DS_Store
+.megaignore
+
+# Generated platform build output
+**/android/build/
+**/android/.gradle/
+**/ios/Flutter/ephemeral/
+**/.idea/

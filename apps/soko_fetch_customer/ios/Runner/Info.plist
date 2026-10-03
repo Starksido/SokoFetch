@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>$(DEVELOPMENT_LANGUAGE)</string>
+  <key>CFBundleDisplayName</key><string>Alphabet</string>
+  <key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>alphabet</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$(FLUTTER_BUILD_NAME)</string>
+  <key>CFBundleSignature</key><string>????</string>
+  <key>CFBundleVersion</key><string>$(FLUTTER_BUILD_NUMBER)</string>
+
+  <!-- Google Maps -->
+  <key>GMSApiKey</key><string>$(GOOGLE_MAPS_API_KEY)</string>
+
+  <!-- Location -->
+  <key>NSLocationWhenInUseUsageDescription</key>
+  <string>Alphabet needs your location to show nearby merchants and track your delivery.</string>
+  <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+  <string>Alphabet needs your location in the background to track your delivery in real time.</string>
+
+  <!-- Camera (proof of delivery photos) -->
+  <key>NSCameraUsageDescription</key>
+  <string>Alphabet needs camera access to capture delivery photos and upload documents.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Alphabet needs photo library access to upload your profile photo or documents.</string>
+
+  <!-- Biometrics -->
+  <key>NSFaceIDUsageDescription</key>
+  <string>Use Face ID for quick and secure login to Alphabet.</string>
+
+  <key>UILaunchStoryboardName</key><string>LaunchScreen</string>
+  <key>UIMainStoryboardFile</key><string></string>
+  <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~ipad</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
+  </array>
+  <key>UIViewControllerBasedStatusBarAppearance</key><false/>
+  <key>CADisableMinimumFrameDurationOnPhone</key><true/>
+  <key>UIApplicationSupportsIndirectInputEvents</key><true/>
+</dict>
+</plist>
