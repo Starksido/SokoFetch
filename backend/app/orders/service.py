@@ -28,6 +28,7 @@ from app.core.exceptions import (
 from app.orders.pricing import calculate_order_pricing
 from app.orders.fraud import check_fraud
 from app.orders import notifications
+from app.payments.service import refund_order
 from app.schemas.order import OrderCreateRequest, OrderStatusUpdate, OrderRatingRequest
 
 log = logging.getLogger("alphabet.orders.service")
@@ -49,6 +50,13 @@ async def create_order(
       5. Create Order record (status=PENDING)
       6. Notify merchant
     """
+    # Wallet payments have no payment flow yet — refuse instead of creating
+    # an order that can never be paid.
+    if payload.payment_method == PaymentMethod.wallet.value:
+        raise SokoFetchException(
+            422, "PAYMENT_METHOD_UNSUPPORTED", "Wallet payments are not supported yet."
+        )
+
     # ── 1. Resolve customer ───────────────────────────────────────────────────
     customer_repo = CustomerRepo(db)
     customer = await customer_repo.get_by_or_404(
@@ -243,6 +251,10 @@ async def update_order_status(
     # Validate role permission for this transition
     assert_can_transition(user, new_status.value)
 
+    # Merchants must not start on an order nobody has paid for
+    if new_status == OrderStatus.confirmed and order.payment_status != PaymentStatus.paid:
+        raise SokoFetchException(422, "ORDER_NOT_PAID", "Order cannot be confirmed until it is paid.")
+
     # Apply transition
     updates = {"status": new_status}
 
@@ -257,6 +269,16 @@ async def update_order_status(
 
     order = await order_repo.update(order, **updates)
     log.info("Order status updated | id=%s | status=%s | by=%s", order_id, new_status.value, user["role"])
+
+    # Cancelling a paid order refunds it. A failed card refund raises and rolls
+    # back the cancellation so it can be retried.
+    if new_status == OrderStatus.cancelled and order.payment_status == PaymentStatus.paid:
+        await refund_order(str(order.id), payload.cancellation_reason, db)
+
+    if new_status == OrderStatus.delivered and order.courier_id:
+        courier = await CourierRepo(db).get(str(order.courier_id))
+        if courier:
+            await _complete_delivery(order, courier, db)
 
     # ── Notifications ─────────────────────────────────────────────────────────
     user_repo = UserRepo(db)
@@ -382,11 +404,22 @@ async def submit_proof_of_delivery(
 
     order = await order_repo.update(order, **updates)
 
-    # Update courier delivery count
-    await courier_repo.update(courier, total_deliveries=courier.total_deliveries + 1)
+    await _complete_delivery(order, courier, db)
 
     log.info("Proof submitted | order=%s | type=%s", order_id, proof_type)
     return order
+
+
+# ── Delivery completion ───────────────────────────────────────────────────────
+async def _complete_delivery(order: Order, courier: Courier, db: AsyncSession) -> None:
+    """Count the delivery and credit the courier's payout. Call once, on DELIVERED."""
+    payout = Decimal(str(order.courier_payout or 0))
+    await CourierRepo(db).update(
+        courier,
+        total_deliveries = courier.total_deliveries + 1,
+        total_earned     = Decimal(str(courier.total_earned or 0)) + payout,
+        pending_payout   = Decimal(str(courier.pending_payout or 0)) + payout,
+    )
 
 
 # ── Rate order ────────────────────────────────────────────────────────────────

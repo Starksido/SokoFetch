@@ -348,3 +348,114 @@ class TestRatingCalculation:
 
         with pytest.raises(pydantic.ValidationError):
             OrderRatingRequest(courier_rating=0)   # Min is 1
+
+
+# ── Order ↔ payment rules ─────────────────────────────────────────────────────
+def _flow_order(status, payment_status, **kw):
+    o = MagicMock()
+    o.id, o.status, o.payment_status = uuid4(), status, payment_status
+    o.can_transition_to.return_value = True
+    o.courier_id     = kw.get("courier_id")
+    o.courier_payout = kw.get("courier_payout", Decimal("100.00"))
+    return o
+
+
+def _flow_repo(**methods):
+    r = MagicMock()
+    for name, value in methods.items():
+        setattr(r, name, AsyncMock(return_value=value))
+    return r
+
+
+def _status_patches(order, courier=None):
+    """Patch everything update_order_status touches except the rule under test."""
+    none_repo = _flow_repo(get=None)
+    return [
+        patch("app.orders.service.OrderRepo", return_value=_flow_repo(get_or_404=order, update=order)),
+        patch("app.orders.service.assert_owns_order"),
+        patch("app.orders.service.get_caller_profile_id", new=AsyncMock(return_value="p")),
+        patch("app.orders.service.CustomerRepo", return_value=none_repo),
+        patch("app.orders.service.MerchantRepo", return_value=none_repo),
+        patch("app.orders.service.UserRepo", return_value=none_repo),
+        patch("app.orders.service.CourierRepo", return_value=_flow_repo(get=courier, update=courier)),
+        patch("app.orders.service.refund_order", new=AsyncMock()),
+    ]
+
+
+class TestOrderPaymentRules:
+    async def _update(self, order, status, role, courier=None):
+        from contextlib import ExitStack
+        from app.orders import service
+        from app.schemas.order import OrderStatusUpdate
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(p) for p in _status_patches(order, courier)]
+            await service.update_order_status(
+                str(order.id), OrderStatusUpdate(status=status), {"sub": "u", "role": role},
+                MagicMock(), MagicMock(),
+            )
+            return mocks
+
+    async def test_merchant_cannot_confirm_unpaid_order(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        from app.core.exceptions import SokoFetchException
+        order = _flow_order(OrderStatus.pending, PaymentStatus.pending)
+        with pytest.raises(SokoFetchException) as exc:
+            await self._update(order, "confirmed", "merchant")
+        assert exc.value.detail["code"] == "ORDER_NOT_PAID"
+
+    async def test_merchant_can_confirm_paid_order(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        order = _flow_order(OrderStatus.pending, PaymentStatus.paid)
+        await self._update(order, "confirmed", "merchant")
+
+    async def test_cancelling_paid_order_refunds(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        order = _flow_order(OrderStatus.pending, PaymentStatus.paid)
+        mocks = await self._update(order, "cancelled", "customer")
+        mocks[-1].assert_awaited_once()   # refund_order
+
+    async def test_cancelling_unpaid_order_does_not_refund(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        order = _flow_order(OrderStatus.pending, PaymentStatus.pending)
+        mocks = await self._update(order, "cancelled", "customer")
+        mocks[-1].assert_not_awaited()
+
+    async def test_delivery_credits_courier(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        courier = MagicMock(total_deliveries=3, total_earned=Decimal("500.00"),
+                            pending_payout=Decimal("200.00"))
+        order = _flow_order(OrderStatus.in_transit, PaymentStatus.paid,
+                            courier_id=uuid4(), courier_payout=Decimal("82.00"))
+        mocks = await self._update(order, "delivered", "courier", courier=courier)
+        kwargs = mocks[6].return_value.update.await_args.kwargs   # CourierRepo
+        assert kwargs["total_deliveries"] == 4
+        assert kwargs["total_earned"] == Decimal("582.00")
+        assert kwargs["pending_payout"] == Decimal("282.00")
+
+    async def test_wallet_orders_rejected(self):
+        from app.orders import service
+        from app.schemas.order import OrderCreateRequest
+        from app.core.exceptions import SokoFetchException
+        payload = OrderCreateRequest(
+            merchant_id=str(uuid4()), items=[{"item_id": str(uuid4()), "quantity": 1}],
+            delivery_address="Westlands, Nairobi", payment_method="wallet",
+        )
+        with pytest.raises(SokoFetchException) as exc:
+            await service.create_order(str(uuid4()), payload, MagicMock(), MagicMock())
+        assert exc.value.detail["code"] == "PAYMENT_METHOD_UNSUPPORTED"
+
+    async def test_proof_of_delivery_credits_courier(self):
+        from app.orders import service
+        from app.models.order import OrderStatus, PaymentStatus
+        courier = MagicMock(id=uuid4(), total_deliveries=0, total_earned=Decimal("0"),
+                            pending_payout=Decimal("0"))
+        order = _flow_order(OrderStatus.in_transit, PaymentStatus.paid,
+                            courier_id=courier.id, courier_payout=Decimal("82.00"))
+        courier_repo = _flow_repo(get_by_or_404=courier, update=courier)
+        with patch("app.orders.service.OrderRepo", return_value=_flow_repo(get_or_404=order, update=order)), \
+             patch("app.orders.service.CourierRepo", return_value=courier_repo):
+            await service.submit_proof_of_delivery(
+                str(order.id), "photo", "u", None, "proof/x.jpg", MagicMock())
+        kwargs = courier_repo.update.await_args.kwargs
+        assert kwargs["total_deliveries"] == 1
+        assert kwargs["pending_payout"] == Decimal("82.00")

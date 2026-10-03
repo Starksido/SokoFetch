@@ -13,6 +13,7 @@ import uuid
 from decimal import Decimal
 from datetime import datetime, timezone
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
@@ -311,49 +312,45 @@ async def _mark_order_paid(order_id: str, payment_ref: str | None, db: AsyncSess
         payment_ref    = payment_ref,
     )
 
-    # Credit merchant pending payout (net of commission)
+    # Credit merchant pending payout (net of commission).
+    # Couriers are credited on delivery, not payment (see orders.service).
     net_merchant = order.subtotal - order.merchant_commission
     merchant_repo = MerchantRepo(db)
     merchant = await merchant_repo.get(str(order.merchant_id))
     if merchant:
-        # Update merchant pending payout
-        await db.execute(
-            __import__("sqlalchemy").text(
-                "UPDATE merchants SET pending_payout = COALESCE(pending_payout, 0) + :amount "
-                "WHERE id = :mid"
-            ),
-            {"amount": float(net_merchant), "mid": str(merchant.id)},
-        )
-
-    # Credit courier pending payout
-    if order.courier_id and order.courier_payout:
-        await db.execute(
-            __import__("sqlalchemy").text(
-                "UPDATE couriers SET pending_payout = COALESCE(pending_payout, 0) + :amount, "
-                "total_earned = COALESCE(total_earned, 0) + :amount "
-                "WHERE id = :cid"
-            ),
-            {"amount": float(order.courier_payout), "cid": str(order.courier_id)},
-        )
+        await _adjust_merchant_pending_payout(str(merchant.id), net_merchant, db)
 
     log.info("Order marked PAID | id=%s | ref=%s", order_id, payment_ref)
+
+
+async def _adjust_merchant_pending_payout(merchant_id: str, amount: Decimal, db: AsyncSession) -> None:
+    """Atomic +/- on merchants.pending_payout (negative = merchant owes it back)."""
+    await db.execute(
+        text(
+            "UPDATE merchants SET pending_payout = COALESCE(pending_payout, 0) + :amount "
+            "WHERE id = :mid"
+        ),
+        {"amount": Decimal(str(amount)), "mid": merchant_id},
+    )
 
 
 # ── Refund ────────────────────────────────────────────────────────────────────
 async def refund_order(
     order_id: str,
-    reason: str,
+    reason: str | None,
     db: AsyncSession,
 ) -> dict:
     """
     Issue a refund for a cancelled paid order.
-    Finds the successful payment record and triggers gateway refund.
+    Finds the successful payment record and triggers the gateway refund.
+
+    Card (Flutterwave): refunded via the API; the order is marked REFUNDED and
+    the merchant credit is reversed. M-Pesa: there is no automatic reversal, so
+    nothing is marked refunded — it is logged for manual reversal instead.
     """
     payment_repo = PaymentRepo(db)
 
     # Find the successful payment for this order
-    from sqlalchemy import select
-    from app.models.payment import Payment
     stmt = (
         select(Payment)
         .where(
@@ -367,26 +364,36 @@ async def refund_order(
 
     if not payment:
         log.info("No paid payment found for order %s — no refund needed", order_id)
-        return {"message": "No refund required"}
+        return {"message": "No refund required", "order_id": order_id}
+
+    if payment.gateway != PaymentGateway.flutterwave:
+        log.warning(
+            "MANUAL M-Pesa reversal required | order=%s | amount=%s | receipt=%s | reason=%s",
+            order_id, payment.amount, payment.gateway_ref, reason,
+        )
+        return {
+            "message":  "M-Pesa payments must be reversed manually.",
+            "order_id": order_id,
+            "manual_action_required": True,
+        }
 
     try:
-        if payment.gateway == PaymentGateway.flutterwave:
-            await flw_client.initiate_refund(payment.gateway_ref, float(payment.amount))
-        else:
-            # M-Pesa refunds are manual via Safaricom Business Reversal API
-            # Log for manual processing
-            log.warning(
-                "M-Pesa refund required | order=%s | amount=%s | receipt=%s",
-                order_id, payment.amount, payment.gateway_ref
-            )
-
-        await payment_repo.update(payment, status=TransactionStatus.refunded)
-        log.info("Refund initiated | order=%s | gateway=%s", order_id, payment.gateway.value)
-        return {"message": "Refund initiated", "order_id": order_id}
-
+        await flw_client.initiate_refund(payment.gateway_ref, float(payment.amount))
     except Exception as exc:
         log.error("Refund failed | order=%s | error=%s", order_id, exc)
         raise SokoFetchException(502, "REFUND_FAILED", f"Refund could not be initiated: {exc}")
+
+    await payment_repo.update(payment, status=TransactionStatus.refunded)
+
+    order = await OrderRepo(db).get(order_id)
+    if order and order.payment_status == PaymentStatus.paid:
+        await OrderRepo(db).update(order, payment_status=PaymentStatus.refunded)
+        await _adjust_merchant_pending_payout(
+            str(order.merchant_id), -(order.subtotal - order.merchant_commission), db,
+        )
+
+    log.info("Refund initiated | order=%s | gateway=%s", order_id, payment.gateway.value)
+    return {"message": "Refund initiated", "order_id": order_id}
 
 
 # ── Payout summary ────────────────────────────────────────────────────────────

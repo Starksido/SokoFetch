@@ -534,3 +534,71 @@ class TestFlutterwaveWebhookFlow:
             result = await service.handle_flw_webhook(self._body(), MagicMock())
         assert result == {"status": "processed"}
         mark_paid.assert_awaited_once()
+
+
+# ── Refunds and payout credits ────────────────────────────────────────────────
+class TestRefundFlow:
+    def _db_with_payment(self, payment):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = payment
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=result)
+        return db
+
+    async def test_card_refund_marks_refunded_and_reverses_merchant_credit(self):
+        from app.payments import service
+        from app.models.payment import PaymentGateway, TransactionStatus
+        from app.models.order import PaymentStatus
+        payment = MagicMock(gateway=PaymentGateway.flutterwave, gateway_ref="12345", amount=Decimal("850"))
+        order = _order(payment_status=PaymentStatus.paid)
+        order.subtotal, order.merchant_commission = Decimal("800"), Decimal("160")
+        payment_repo, order_repo = _repo(update=payment), _repo(get=order, update=order)
+        with patch("app.payments.service.PaymentRepo", return_value=payment_repo), \
+             patch("app.payments.service.OrderRepo", return_value=order_repo), \
+             patch("app.payments.service.flw_client.initiate_refund", new=AsyncMock()) as refund, \
+             patch("app.payments.service._adjust_merchant_pending_payout", new=AsyncMock()) as adjust:
+            await service.refund_order(str(order.id), "changed mind", self._db_with_payment(payment))
+        refund.assert_awaited_once_with("12345", 850.0)
+        assert payment_repo.update.await_args.kwargs["status"] == TransactionStatus.refunded
+        assert order_repo.update.await_args.kwargs["payment_status"] == PaymentStatus.refunded
+        assert adjust.await_args.args[1] == Decimal("-640")
+
+    async def test_mpesa_refund_is_not_marked_refunded(self):
+        # Regression: M-Pesa payments were marked refunded with no money moving
+        from app.payments import service
+        from app.models.payment import PaymentGateway
+        payment = MagicMock(gateway=PaymentGateway.mpesa, amount=Decimal("850"))
+        payment_repo = _repo(update=payment)
+        with patch("app.payments.service.PaymentRepo", return_value=payment_repo), \
+             patch("app.payments.service.flw_client.initiate_refund", new=AsyncMock()) as refund:
+            result = await service.refund_order(str(uuid4()), None, self._db_with_payment(payment))
+        assert result["manual_action_required"] is True
+        refund.assert_not_awaited()
+        payment_repo.update.assert_not_awaited()
+
+    async def test_failed_card_refund_raises(self):
+        from app.payments import service
+        from app.models.payment import PaymentGateway
+        from app.core.exceptions import SokoFetchException
+        payment = MagicMock(gateway=PaymentGateway.flutterwave, gateway_ref="12345", amount=Decimal("850"))
+        with patch("app.payments.service.PaymentRepo", return_value=_repo(update=payment)), \
+             patch("app.payments.service.flw_client.initiate_refund",
+                   new=AsyncMock(side_effect=RuntimeError("down"))), \
+             pytest.raises(SokoFetchException) as exc:
+            await service.refund_order(str(uuid4()), None, self._db_with_payment(payment))
+        assert exc.value.detail["code"] == "REFUND_FAILED"
+
+    async def test_mark_paid_does_not_credit_courier(self):
+        # Couriers are credited on delivery (orders.service), not on payment
+        from app.payments import service
+        from app.models.order import PaymentStatus
+        order = _order(payment_status=PaymentStatus.pending)
+        order.subtotal, order.merchant_commission = Decimal("800"), Decimal("160")
+        order.courier_id, order.courier_payout = uuid4(), Decimal("100")
+        db = MagicMock()
+        db.execute = AsyncMock()
+        with patch("app.payments.service.OrderRepo", return_value=_repo(get=order, update=order)), \
+             patch("app.payments.service.MerchantRepo", return_value=_repo(get=MagicMock(id=uuid4()))):
+            await service._mark_order_paid(str(order.id), "REF", db)
+        sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
+        assert "merchants" in sql and "couriers" not in sql
