@@ -67,6 +67,12 @@ class OrderSummary(BaseModel):
     """Lightweight — for list views."""
     id:              str
     merchant_id:     str
+
+    @field_validator("id", "merchant_id", mode="before")
+    @classmethod
+    def _stringify_uuid(cls, v):
+        return str(v) if v is not None else v
+
     merchant_name:   Optional[str] = None
     status:          str
     total:           Decimal

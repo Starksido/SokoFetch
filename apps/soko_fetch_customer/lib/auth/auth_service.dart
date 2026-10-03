@@ -1,7 +1,4 @@
-﻿@'
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
-import '../config/app_config.dart';
 import '../models/models.dart';
 import '../network/secure_client.dart';
 
@@ -114,4 +111,3 @@ class AuthService {
     await SecureApiClient.clearTokens();
   }
 }
-'@ | Set-Content -Path "lib\auth\auth_service.dart" -Encoding UTF8
