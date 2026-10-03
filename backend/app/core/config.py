@@ -32,10 +32,14 @@ class Settings(BaseSettings):
     MPESA_SHORTCODE: str = "174379"
     MPESA_PASSKEY: str = ""
     MPESA_ENVIRONMENT: str = "sandbox"
+    # Secret path segment on the STK callback URL (Daraja does not sign callbacks)
+    MPESA_CALLBACK_TOKEN: str = ""
 
     # ── Flutterwave ───────────────────────────────────────────────────────────
     FLUTTERWAVE_SECRET_KEY: str = ""
     FLUTTERWAVE_PUBLIC_KEY: str = ""
+    # "Secret hash" set in the Flutterwave dashboard; sent back as the verif-hash header
+    FLUTTERWAVE_SECRET_HASH: str = ""
 
     # ── Africa's Talking ──────────────────────────────────────────────────────
     AT_USERNAME: str = "sandbox"

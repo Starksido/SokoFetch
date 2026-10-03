@@ -9,9 +9,9 @@ Handles:
   - Refund initiation
   - Webhook signature verification
 """
-import hashlib
 import hmac
 import logging
+from decimal import Decimal
 
 import httpx
 
@@ -81,17 +81,30 @@ async def initiate_refund(transaction_id: str, amount: float | None = None) -> d
 
 
 # ── Webhook signature verification ───────────────────────────────────────────
-def verify_webhook_signature(payload_str: str, signature: str) -> bool:
+def verify_webhook_signature(signature: str | None) -> bool:
     """
-    Verify the 'verif-hash' header sent by Flutterwave on webhooks.
-    The secret hash is configured in the Flutterwave dashboard.
+    Flutterwave sends the dashboard "secret hash" verbatim in the 'verif-hash'
+    header (it is not an HMAC of the body). Reject if missing or not configured.
     """
-    expected = hmac.new(
-        settings.FLUTTERWAVE_SECRET_KEY.encode(),
-        payload_str.encode(),
-        hashlib.sha512,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    expected = settings.FLUTTERWAVE_SECRET_HASH
+    if not expected or not signature:
+        return False
+    return hmac.compare_digest(expected.encode(), signature.encode())
+
+
+# ── Transaction ↔ order checks ────────────────────────────────────────────────
+def validate_transaction_for_order(tx: dict, order_id: str, order_total) -> None:
+    """
+    Ensure a verified FLW transaction actually pays for this order.
+    Raises ValueError describing the first mismatch.
+    """
+    if str(tx.get("tx_ref", "")) != str(order_id):
+        raise ValueError("Transaction reference does not match this order.")
+    if tx.get("currency") != "KES":
+        raise ValueError(f"Unexpected currency {tx.get('currency')!r}; expected KES.")
+    paid = Decimal(str(tx.get("amount", 0)))
+    if paid < Decimal(str(order_total)):
+        raise ValueError(f"Payment amount KES {paid} is less than order total KES {order_total}.")
 
 
 # ── Parse webhook ─────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ from app.core.redis import get_redis
 from app.core.exceptions import SokoFetchException
 from app.auth.guards import get_current_user, require_role
 from app.payments import service
-from app.payments.mpesa import verify_callback_signature
+from app.payments.mpesa import verify_callback_token
 from app.payments.flutterwave import verify_webhook_signature
 from app.schemas.payment import (
     MpesaInitiateRequest,
@@ -55,28 +55,26 @@ async def initiate_mpesa(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POST /payments/mpesa/callback
-# Safaricom webhook — no auth (verified by HMAC signature)
+# POST /payments/mpesa/callback/{token}
+# Safaricom webhook — Daraja does not sign callbacks, so the URL carries a
+# secret token (MPESA_CALLBACK_TOKEN) that we set when initiating the STK push.
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post(
-    "/mpesa/callback",
+    "/mpesa/callback/{token}",
     include_in_schema=False,   # Hide from Swagger — internal webhook only
 )
 async def mpesa_callback(
+    token:   str,
     request: Request,
     db:      AsyncSession   = Depends(get_db),
     redis:   aioredis.Redis = Depends(get_redis),
 ):
+    if not verify_callback_token(token):
+        log.warning("M-Pesa callback rejected: bad or unconfigured token")
+        raise SokoFetchException(401, "INVALID_SIGNATURE", "Callback not authorised.")
+
     raw_body = await request.body()
     body_str = raw_body.decode("utf-8")
-
-    # Verify Safaricom signature (skip in sandbox/dev)
-    from app.core.config import settings
-    if settings.is_production:
-        sig = request.headers.get("X-Mpesa-Signature", "")
-        if not verify_callback_signature(body_str, sig):
-            log.warning("M-Pesa callback signature verification failed")
-            raise SokoFetchException(401, "INVALID_SIGNATURE", "Callback signature invalid.")
 
     try:
         body = json.loads(body_str)
@@ -125,14 +123,13 @@ async def flw_webhook(
     verif_hash: str | None = Header(None, alias="verif-hash"),
     db: AsyncSession = Depends(get_db),
 ):
+    # Always required — a missing header must never skip verification
+    if not verify_webhook_signature(verif_hash):
+        log.warning("Flutterwave webhook rejected: missing or invalid verif-hash")
+        raise SokoFetchException(401, "INVALID_SIGNATURE", "Webhook signature invalid.")
+
     raw_body = await request.body()
     body_str = raw_body.decode("utf-8")
-
-    from app.core.config import settings
-    if settings.is_production and verif_hash:
-        if not verify_webhook_signature(body_str, verif_hash):
-            log.warning("Flutterwave webhook signature failed")
-            raise SokoFetchException(401, "INVALID_SIGNATURE", "Webhook signature invalid.")
 
     try:
         body = json.loads(body_str)

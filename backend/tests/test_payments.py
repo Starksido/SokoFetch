@@ -134,44 +134,48 @@ class TestFlutterwaveWebhookParsing:
 # ══════════════════════════════════════════════════════════════════════════════
 class TestSignatureVerification:
 
-    def test_mpesa_valid_signature(self):
-        import os
-        os.environ.setdefault("MPESA_PASSKEY", "test_passkey")
-
-        from app.payments.mpesa import verify_callback_signature
-        payload  = '{"test": "data"}'
-        secret   = "test_passkey"
-        expected = hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
+    def test_mpesa_callback_token_accepted(self):
+        from app.payments.mpesa import verify_callback_token
         with patch("app.payments.mpesa.settings") as mock_settings:
-            mock_settings.MPESA_PASSKEY = secret
-            result = verify_callback_signature(payload, expected)
-        assert result is True
+            mock_settings.MPESA_CALLBACK_TOKEN = "s3cret-token"
+            assert verify_callback_token("s3cret-token") is True
 
-    def test_mpesa_invalid_signature_rejected(self):
-        from app.payments.mpesa import verify_callback_signature
+    def test_mpesa_callback_wrong_token_rejected(self):
+        from app.payments.mpesa import verify_callback_token
         with patch("app.payments.mpesa.settings") as mock_settings:
-            mock_settings.MPESA_PASSKEY = "correct_key"
-            result = verify_callback_signature('{"data": 1}', "wrong_sig")
-        assert result is False
+            mock_settings.MPESA_CALLBACK_TOKEN = "s3cret-token"
+            assert verify_callback_token("guess") is False
 
-    def test_flw_valid_signature(self):
-        from app.payments.flutterwave import verify_webhook_signature
-        payload = '{"event": "charge.completed"}'
-        secret  = "test_flw_secret"
-        expected = hmac.new(secret.encode(), payload.encode(), hashlib.sha512).hexdigest()
+    def test_mpesa_callback_rejected_when_token_unconfigured(self):
+        from app.payments.mpesa import verify_callback_token
+        with patch("app.payments.mpesa.settings") as mock_settings:
+            mock_settings.MPESA_CALLBACK_TOKEN = ""
+            assert verify_callback_token("") is False
 
-        with patch("app.payments.flutterwave.settings") as mock_settings:
-            mock_settings.FLUTTERWAVE_SECRET_KEY = secret
-            result = verify_webhook_signature(payload, expected)
-        assert result is True
-
-    def test_flw_tampered_payload_rejected(self):
+    def test_flw_valid_hash(self):
         from app.payments.flutterwave import verify_webhook_signature
         with patch("app.payments.flutterwave.settings") as mock_settings:
-            mock_settings.FLUTTERWAVE_SECRET_KEY = "correct_key"
-            result = verify_webhook_signature('{"tampered": true}', "wrong_sig")
-        assert result is False
+            mock_settings.FLUTTERWAVE_SECRET_HASH = "dashboard-hash"
+            assert verify_webhook_signature("dashboard-hash") is True
+
+    def test_flw_wrong_hash_rejected(self):
+        from app.payments.flutterwave import verify_webhook_signature
+        with patch("app.payments.flutterwave.settings") as mock_settings:
+            mock_settings.FLUTTERWAVE_SECRET_HASH = "dashboard-hash"
+            assert verify_webhook_signature("wrong") is False
+
+    def test_flw_missing_header_rejected(self):
+        # Regression: a missing verif-hash header used to skip verification
+        from app.payments.flutterwave import verify_webhook_signature
+        with patch("app.payments.flutterwave.settings") as mock_settings:
+            mock_settings.FLUTTERWAVE_SECRET_HASH = "dashboard-hash"
+            assert verify_webhook_signature(None) is False
+
+    def test_flw_rejected_when_hash_unconfigured(self):
+        from app.payments.flutterwave import verify_webhook_signature
+        with patch("app.payments.flutterwave.settings") as mock_settings:
+            mock_settings.FLUTTERWAVE_SECRET_HASH = ""
+            assert verify_webhook_signature("") is False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -179,27 +183,35 @@ class TestSignatureVerification:
 # ══════════════════════════════════════════════════════════════════════════════
 class TestAmountValidation:
 
-    def test_integer_amount_for_mpesa(self):
-        """Daraja requires integer amounts — no decimals."""
-        amount_kes = Decimal("850.50")
-        daraja_amount = max(1, int(amount_kes))
-        assert daraja_amount == 850
-        assert isinstance(daraja_amount, int)
+    def test_mpesa_amount_rounds_up(self):
+        """Daraja requires whole KES — round up so the order is never underpaid."""
+        from app.payments.mpesa import daraja_amount
+        assert daraja_amount(Decimal("850.50")) == 851
+        assert daraja_amount(Decimal("850.00")) == 850
+        assert isinstance(daraja_amount(Decimal("850.50")), int)
 
     def test_minimum_mpesa_amount_is_1(self):
         """Daraja rejects 0 — we floor at 1."""
-        amount = 0
-        daraja_amount = max(1, int(amount))
-        assert daraja_amount == 1
+        from app.payments.mpesa import daraja_amount
+        assert daraja_amount(0) == 1
 
-    def test_flw_amount_mismatch_detected(self):
-        """
-        If Flutterwave reports a lower amount than the order,
-        the service should raise an error (anti-tampering).
-        """
-        order_total  = Decimal("850.00")
-        paid_amount  = Decimal("1.00")   # Tampered
-        assert paid_amount < order_total   # Would trigger the mismatch check
+    def test_flw_tx_matching_order_passes(self):
+        from app.payments.flutterwave import validate_transaction_for_order
+        oid = str(uuid4())
+        validate_transaction_for_order(
+            {"tx_ref": oid, "currency": "KES", "amount": 850}, oid, Decimal("850.00"))
+
+    @pytest.mark.parametrize("tx_changes", [
+        {"tx_ref": "another-order"},
+        {"currency": "NGN"},
+        {"amount": 1},
+    ])
+    def test_flw_tx_mismatch_rejected(self, tx_changes):
+        from app.payments.flutterwave import validate_transaction_for_order
+        oid = str(uuid4())
+        tx = {"tx_ref": oid, "currency": "KES", "amount": 850, **tx_changes}
+        with pytest.raises(ValueError):
+            validate_transaction_for_order(tx, oid, Decimal("850.00"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -319,3 +331,206 @@ class TestPaymentOwnership:
         p1, p2 = self._patch_repos(order, None)
         with p1, p2, pytest.raises(ObjectAccessDeniedError):
             await service.verify_card_payment(str(uuid4()), "123", str(uuid4()), MagicMock())
+
+
+# ── Payment flows (gateway confirmations) ─────────────────────────────────────
+def _order(**kw):
+    from app.models.order import OrderStatus, PaymentStatus
+    o = MagicMock()
+    o.id             = kw.get("id", uuid4())
+    o.customer_id    = kw.get("customer_id", uuid4())
+    o.total          = kw.get("total", Decimal("850.00"))
+    o.status         = kw.get("status", OrderStatus.pending)
+    o.payment_status = kw.get("payment_status", PaymentStatus.pending)
+    return o
+
+
+def _repo(**methods):
+    r = MagicMock()
+    for name, value in methods.items():
+        setattr(r, name, AsyncMock(return_value=value))
+    return r
+
+
+def _mpesa_callback(checkout_id="ws_CO_1", result_code=0, amount=850):
+    items = [{"Name": "Amount", "Value": amount}, {"Name": "MpesaReceiptNumber", "Value": "RCPT1"}]
+    return {"Body": {"stkCallback": {
+        "CheckoutRequestID": checkout_id, "ResultCode": result_code, "ResultDesc": "x",
+        "CallbackMetadata": {"Item": items},
+    }}}
+
+
+class TestMpesaCallbackFlow:
+    async def test_missing_checkout_id_ignored(self):
+        from app.payments import service
+        payment_repo = _repo(get_by=MagicMock())
+        with patch("app.payments.service.PaymentRepo", return_value=payment_repo):
+            body = _mpesa_callback(checkout_id=None)
+            assert await service.handle_mpesa_callback(body, MagicMock(), MagicMock()) == {"status": "ignored"}
+        payment_repo.get_by.assert_not_awaited()
+
+    async def test_duplicate_callback_ignored(self):
+        from app.payments import service
+        from app.models.payment import TransactionStatus
+        payment = MagicMock(status=TransactionStatus.success)
+        payment_repo = _repo(get_by=payment, update=payment)
+        with patch("app.payments.service.PaymentRepo", return_value=payment_repo), \
+             patch("app.payments.service._mark_order_paid", new=AsyncMock()) as mark_paid:
+            result = await service.handle_mpesa_callback(_mpesa_callback(), MagicMock(), MagicMock())
+        assert result == {"status": "ignored"}
+        mark_paid.assert_not_awaited()
+
+    async def test_underpayment_is_rejected(self):
+        from app.payments import service
+        from app.models.payment import TransactionStatus
+        payment = MagicMock(status=TransactionStatus.pending, order_id=uuid4())
+        payment_repo = _repo(get_by=payment, update=payment)
+        order_repo = _repo(get=_order(total=Decimal("850.00")))
+        with patch("app.payments.service.PaymentRepo", return_value=payment_repo), \
+             patch("app.payments.service.OrderRepo", return_value=order_repo), \
+             patch("app.payments.service._mark_order_paid", new=AsyncMock()) as mark_paid:
+            await service.handle_mpesa_callback(_mpesa_callback(amount=1), MagicMock(), MagicMock())
+        mark_paid.assert_not_awaited()
+        assert payment_repo.update.await_args.kwargs["status"] == TransactionStatus.failed
+
+    async def test_full_payment_marks_order_paid(self):
+        from app.payments import service
+        from app.models.payment import TransactionStatus
+        payment = MagicMock(status=TransactionStatus.pending, order_id=uuid4())
+        payment_repo = _repo(get_by=payment, update=payment)
+        order_repo = _repo(get=_order(total=Decimal("850.00")))
+        with patch("app.payments.service.PaymentRepo", return_value=payment_repo), \
+             patch("app.payments.service.OrderRepo", return_value=order_repo), \
+             patch("app.payments.service._mark_order_paid", new=AsyncMock()) as mark_paid:
+            await service.handle_mpesa_callback(_mpesa_callback(amount=850), MagicMock(), MagicMock())
+        mark_paid.assert_awaited_once()
+        assert payment_repo.update.await_args.kwargs["status"] == TransactionStatus.success
+
+
+class TestMpesaInitiate:
+    def _patches(self, order):
+        customer = MagicMock(id=order.customer_id)
+        return (
+            patch("app.payments.service.OrderRepo", return_value=_repo(get_or_404=order)),
+            patch("app.payments.service.CustomerRepo", return_value=_repo(get_by_user_id=customer)),
+        )
+
+    async def test_invalid_phone_rejected(self):
+        from app.payments import service
+        from app.core.exceptions import InvalidPhoneError
+        p1, p2 = self._patches(_order())
+        with p1, p2, pytest.raises(InvalidPhoneError):
+            await service.initiate_mpesa_payment(str(uuid4()), "12345", str(uuid4()), MagicMock(), MagicMock())
+
+    async def test_cancelled_order_not_payable(self):
+        from app.payments import service
+        from app.models.order import OrderStatus
+        from app.core.exceptions import SokoFetchException
+        p1, p2 = self._patches(_order(status=OrderStatus.cancelled))
+        with p1, p2, pytest.raises(SokoFetchException) as exc:
+            await service.initiate_mpesa_payment(str(uuid4()), "0712345678", str(uuid4()), MagicMock(), MagicMock())
+        assert exc.value.detail["code"] == "ORDER_NOT_PAYABLE"
+
+    async def test_sends_normalised_phone_and_rounded_amount(self):
+        from app.payments import service
+        order = _order(total=Decimal("850.50"))
+        p1, p2 = self._patches(order)
+        payment = MagicMock(id=uuid4())
+        stk = AsyncMock(return_value={"CheckoutRequestID": "ws_CO_1"})
+        with p1, p2, \
+             patch("app.payments.service.PaymentRepo", return_value=_repo(create=payment, update=payment)), \
+             patch("app.payments.service.mpesa_client.initiate_stk_push", new=stk):
+            await service.initiate_mpesa_payment(str(order.id), "0712345678", str(uuid4()), MagicMock(), MagicMock())
+        assert stk.await_args.kwargs["phone"] == "+254712345678"
+        assert stk.await_args.kwargs["amount"] == 851
+
+
+class TestCardVerifyFlow:
+    def _patches(self, order, already_recorded=None):
+        customer = MagicMock(id=order.customer_id)
+        payment = MagicMock(id=uuid4())
+        return (
+            patch("app.payments.service.OrderRepo", return_value=_repo(get_or_404=order)),
+            patch("app.payments.service.CustomerRepo", return_value=_repo(get_by_user_id=customer)),
+            patch("app.payments.service.PaymentRepo",
+                  return_value=_repo(get_by=already_recorded, create=payment)),
+            patch("app.payments.service._mark_order_paid", new=AsyncMock()),
+        )
+
+    def _tx(self, order, **changes):
+        return {"id": 12345, "tx_ref": str(order.id), "currency": "KES",
+                "amount": 850, "flw_ref": "FLW-1", **changes}
+
+    async def test_tx_for_another_order_rejected(self):
+        from app.payments import service
+        from app.core.exceptions import SokoFetchException
+        order = _order()
+        p = self._patches(order)
+        verify = AsyncMock(return_value=self._tx(order, tx_ref=str(uuid4())))
+        with p[0], p[1], p[2], p[3], patch("app.payments.service.flw_client.verify_payment", new=verify), \
+             pytest.raises(SokoFetchException) as exc:
+            await service.verify_card_payment(str(order.id), "12345", str(uuid4()), MagicMock())
+        assert exc.value.detail["code"] == "PAYMENT_MISMATCH"
+
+    async def test_reused_transaction_rejected(self):
+        from app.payments import service
+        from app.core.exceptions import SokoFetchException
+        order = _order()
+        p = self._patches(order, already_recorded=MagicMock())
+        verify = AsyncMock(return_value=self._tx(order))
+        with p[0], p[1], p[2], p[3], patch("app.payments.service.flw_client.verify_payment", new=verify), \
+             pytest.raises(SokoFetchException) as exc:
+            await service.verify_card_payment(str(order.id), "12345", str(uuid4()), MagicMock())
+        assert exc.value.detail["code"] == "TRANSACTION_ALREADY_USED"
+
+    async def test_success_stores_flw_transaction_id(self):
+        from app.payments import service
+        order = _order()
+        p = self._patches(order)
+        verify = AsyncMock(return_value=self._tx(order))
+        with p[0], p[1], p[2] as payment_repo_cls, p[3] as mark_paid, \
+             patch("app.payments.service.flw_client.verify_payment", new=verify):
+            await service.verify_card_payment(str(order.id), "12345", str(uuid4()), MagicMock())
+        create_kwargs = payment_repo_cls.return_value.create.await_args.kwargs
+        assert create_kwargs["gateway_ref"] == "12345"   # numeric id, used for refunds
+        mark_paid.assert_awaited_once()
+
+
+class TestFlutterwaveWebhookFlow:
+    def _body(self, tx_id="12345"):
+        return {"event": "charge.completed",
+                "data": {"id": tx_id, "status": "successful", "tx_ref": "whatever", "amount": 850}}
+
+    async def test_body_is_not_trusted_without_api_verification(self):
+        from app.payments import service
+        verify = AsyncMock(side_effect=ValueError("Transaction not successful"))
+        with patch("app.payments.service.flw_client.verify_payment", new=verify), \
+             patch("app.payments.service._mark_order_paid", new=AsyncMock()) as mark_paid:
+            result = await service.handle_flw_webhook(self._body(), MagicMock())
+        assert result == {"status": "ignored"}
+        mark_paid.assert_not_awaited()
+
+    async def test_mismatched_amount_ignored(self):
+        from app.payments import service
+        order = _order(total=Decimal("850.00"))
+        tx = {"id": 12345, "tx_ref": str(order.id), "currency": "KES", "amount": 1}
+        with patch("app.payments.service.flw_client.verify_payment", new=AsyncMock(return_value=tx)), \
+             patch("app.payments.service.OrderRepo", return_value=_repo(get=order)), \
+             patch("app.payments.service._mark_order_paid", new=AsyncMock()) as mark_paid:
+            result = await service.handle_flw_webhook(self._body(), MagicMock())
+        assert result == {"status": "ignored"}
+        mark_paid.assert_not_awaited()
+
+    async def test_verified_matching_charge_marks_paid(self):
+        from app.payments import service
+        order = _order(total=Decimal("850.00"))
+        tx = {"id": 12345, "tx_ref": str(order.id), "currency": "KES", "amount": 850, "flw_ref": "F"}
+        customer = MagicMock(user_id=uuid4())
+        with patch("app.payments.service.flw_client.verify_payment", new=AsyncMock(return_value=tx)), \
+             patch("app.payments.service.OrderRepo", return_value=_repo(get=order)), \
+             patch("app.payments.service.CustomerRepo", return_value=_repo(get=customer)), \
+             patch("app.payments.service.PaymentRepo", return_value=_repo(get_by=None, create=MagicMock())), \
+             patch("app.payments.service._mark_order_paid", new=AsyncMock()) as mark_paid:
+            result = await service.handle_flw_webhook(self._body(), MagicMock())
+        assert result == {"status": "processed"}
+        mark_paid.assert_awaited_once()

@@ -4,14 +4,15 @@ M-Pesa Daraja API Integration
 Handles:
   - OAuth token generation (cached in Redis)
   - STK Push initiation (payment prompt on customer phone)
-  - Callback signature verification
+  - Callback authentication (secret token in the callback URL)
   - Payment status polling
 """
 import base64
-import hashlib
 import hmac
 import logging
+import math
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 import redis.asyncio as aioredis
@@ -63,6 +64,12 @@ def _stk_password(timestamp: str) -> str:
     return base64.b64encode(raw.encode()).decode()
 
 
+# ── Amount ────────────────────────────────────────────────────────────────────
+def daraja_amount(total) -> int:
+    """Daraja only accepts whole KES (min 1). Round UP so the order is never underpaid."""
+    return max(1, math.ceil(Decimal(str(total))))
+
+
 # ── STK Push ──────────────────────────────────────────────────────────────────
 async def initiate_stk_push(
     phone: str,
@@ -77,6 +84,10 @@ async def initiate_stk_push(
     Returns the raw Daraja response dict.
     Raises httpx.HTTPError on network/API failure.
     """
+    if not settings.MPESA_CALLBACK_TOKEN:
+        # Without the token the callback endpoint rejects every result
+        raise ValueError("MPESA_CALLBACK_TOKEN is not configured")
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     token     = await get_access_token(redis)
 
@@ -92,7 +103,7 @@ async def initiate_stk_push(
         "PartyA":            mpesa_phone,
         "PartyB":            settings.MPESA_SHORTCODE,
         "PhoneNumber":       mpesa_phone,
-        "CallBackURL":       f"{settings.BASE_URL}/payments/mpesa/callback",
+        "CallBackURL":       f"{settings.BASE_URL}/payments/mpesa/callback/{settings.MPESA_CALLBACK_TOKEN}",
         "AccountReference":  order_id[:12],            # Max 12 chars
         "TransactionDesc":   f"Soko Fetch order",
     }
@@ -125,17 +136,15 @@ async def initiate_stk_push(
 
 
 # ── Callback verification ─────────────────────────────────────────────────────
-def verify_callback_signature(payload_str: str, signature: str) -> bool:
+def verify_callback_token(token: str) -> bool:
     """
-    Verify Safaricom's HMAC-SHA256 signature on webhook callbacks.
-    The signature header is 'X-Mpesa-Signature'.
+    Daraja does not sign STK callbacks, so the callback URL carries a secret
+    token (MPESA_CALLBACK_TOKEN). Reject everything if it is not configured.
     """
-    expected = hmac.new(
-        settings.MPESA_PASSKEY.encode(),
-        payload_str.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    expected = settings.MPESA_CALLBACK_TOKEN
+    if not expected:
+        return False
+    return hmac.compare_digest(expected.encode(), token.encode())
 
 
 # ── Parse callback ────────────────────────────────────────────────────────────

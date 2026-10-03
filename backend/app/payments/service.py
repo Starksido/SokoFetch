@@ -9,22 +9,42 @@ Orchestrates the full payment lifecycle:
   - Track merchant payout totals
 """
 import logging
+import uuid
 from decimal import Decimal
 from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
-from app.models.order import Order, PaymentStatus, PaymentMethod
+from app.models.order import Order, OrderStatus, PaymentStatus, PaymentMethod
 from app.models.payment import Payment, PaymentGateway, TransactionStatus
 from app.models.merchant import Merchant
 from app.core.repository import OrderRepo, PaymentRepo, MerchantRepo, CourierRepo, CustomerRepo
-from app.core.exceptions import SokoFetchException, NotFoundError, PaymentBlockedError
+from app.core.exceptions import (
+    SokoFetchException, NotFoundError, PaymentBlockedError, ObjectAccessDeniedError,
+)
+from app.auth.otp import validate_phone
 from app.payments import mpesa as mpesa_client
 from app.payments import flutterwave as flw_client
 from app.orders.fraud import check_fraud
 
 log = logging.getLogger("alphabet.payments.service")
+
+
+# ── Shared checks ─────────────────────────────────────────────────────────────
+async def _assert_customer_owns_order(order: Order, customer_user_id: str, db: AsyncSession) -> None:
+    """order.customer_id is the customer PROFILE id, not the users.id in the JWT."""
+    customer = await CustomerRepo(db).get_by_user_id(customer_user_id)
+    if customer is None or str(order.customer_id) != str(customer.id):
+        raise ObjectAccessDeniedError()
+
+
+def _assert_payable(order: Order) -> None:
+    if order.payment_status == PaymentStatus.paid:
+        raise SokoFetchException(409, "ALREADY_PAID", "This order has already been paid.")
+    if order.status != OrderStatus.pending:
+        raise SokoFetchException(409, "ORDER_NOT_PAYABLE",
+                                 f"An order in status '{order.status.value}' cannot be paid.")
 
 
 # ── Initiate M-Pesa payment ───────────────────────────────────────────────────
@@ -43,14 +63,11 @@ async def initiate_mpesa_payment(
     order_repo = OrderRepo(db)
     order = await order_repo.get_or_404(order_id, "Order")
 
-    # order.customer_id is the customer PROFILE id, not the users.id in the JWT
-    customer = await CustomerRepo(db).get_by_user_id(customer_user_id)
-    if customer is None or str(order.customer_id) != str(customer.id):
-        from app.core.exceptions import ObjectAccessDeniedError
-        raise ObjectAccessDeniedError()
+    await _assert_customer_owns_order(order, customer_user_id, db)
+    _assert_payable(order)
 
-    if order.payment_status == PaymentStatus.paid:
-        raise SokoFetchException(409, "ALREADY_PAID", "This order has already been paid.")
+    phone  = validate_phone(customer_phone)          # 0712… → +254712…
+    amount = mpesa_client.daraja_amount(order.total)  # whole KES, rounded up
 
     # Create a Payment record (initiated state)
     payment_repo = PaymentRepo(db)
@@ -58,7 +75,7 @@ async def initiate_mpesa_payment(
         order_id    = order_id,
         customer_id = customer_user_id,
         gateway     = PaymentGateway.mpesa,
-        amount      = order.total,
+        amount      = amount,
         currency    = "KES",
         status      = TransactionStatus.initiated,
     )
@@ -66,8 +83,8 @@ async def initiate_mpesa_payment(
     # Call Daraja
     try:
         daraja_resp = await mpesa_client.initiate_stk_push(
-            phone    = customer_phone,
-            amount   = int(order.total),
+            phone    = phone,
+            amount   = amount,
             order_id = order_id,
             redis    = redis,
         )
@@ -101,22 +118,44 @@ async def handle_mpesa_callback(
 ) -> dict:
     """
     Process the Daraja STK callback.
-    Called by the webhook endpoint after signature verification.
+    Called by the webhook endpoint after the callback token is verified.
+    Only PENDING payments are processed, so repeated callbacks are no-ops.
     """
     parsed = mpesa_client.parse_stk_callback(body)
     checkout_id = parsed["checkout_request_id"]
     result_code = parsed["result_code"]
 
+    if not checkout_id:
+        log.warning("M-Pesa callback without CheckoutRequestID")
+        return {"status": "ignored"}
+
     # Look up the payment record
     payment_repo = PaymentRepo(db)
-    payment = await payment_repo.get_by(gateway_ref=checkout_id)
+    payment = await payment_repo.get_by(gateway=PaymentGateway.mpesa, gateway_ref=checkout_id)
 
     if not payment:
         log.warning("M-Pesa callback for unknown checkout: %s", checkout_id)
         return {"status": "ignored"}
 
+    if payment.status != TransactionStatus.pending:
+        log.info("M-Pesa duplicate callback ignored | checkout=%s | status=%s",
+                 checkout_id, payment.status.value)
+        return {"status": "ignored"}
+
     if result_code == 0:
-        # SUCCESS
+        # SUCCESS — but only if the customer actually paid the full amount
+        order = await OrderRepo(db).get(str(payment.order_id))
+        paid  = parsed.get("amount")
+        if order is None or paid is None or Decimal(str(paid)) < Decimal(str(order.total)):
+            reason = f"Amount mismatch: paid {paid}, expected {order.total if order else 'unknown'}"
+            await payment_repo.update(payment,
+                status          = TransactionStatus.failed,
+                failure_reason  = reason,
+                gateway_payload = parsed,
+            )
+            log.warning("M-Pesa payment REJECTED | order=%s | %s", payment.order_id, reason)
+            return {"status": "processed"}
+
         await payment_repo.update(payment,
             status          = TransactionStatus.success,
             gateway_ref     = parsed.get("mpesa_receipt") or checkout_id,
@@ -139,6 +178,31 @@ async def handle_mpesa_callback(
     return {"status": "processed"}
 
 
+# ── Flutterwave helpers ───────────────────────────────────────────────────────
+async def _flw_tx_already_recorded(tx: dict, db: AsyncSession) -> bool:
+    existing = await PaymentRepo(db).get_by(
+        gateway=PaymentGateway.flutterwave, gateway_ref=str(tx.get("id")),
+    )
+    return existing is not None
+
+
+async def _record_flw_payment(order: Order, tx: dict, customer_user_id: str, db: AsyncSession) -> Payment:
+    """Store the verified charge (gateway_ref = FLW transaction id, needed for refunds) and mark paid."""
+    payment = await PaymentRepo(db).create(
+        order_id        = str(order.id),
+        customer_id     = customer_user_id,
+        gateway         = PaymentGateway.flutterwave,
+        gateway_ref     = str(tx.get("id")),
+        gateway_payload = tx,
+        amount          = Decimal(str(tx.get("amount", 0))),
+        currency        = tx.get("currency", "KES"),
+        status          = TransactionStatus.success,
+        completed_at    = datetime.now(timezone.utc),
+    )
+    await _mark_order_paid(str(order.id), tx.get("flw_ref"), db)
+    return payment
+
+
 # ── Verify Flutterwave card payment ───────────────────────────────────────────
 async def verify_card_payment(
     order_id: str,
@@ -153,14 +217,8 @@ async def verify_card_payment(
     order_repo = OrderRepo(db)
     order = await order_repo.get_or_404(order_id, "Order")
 
-    # order.customer_id is the customer PROFILE id, not the users.id in the JWT
-    customer = await CustomerRepo(db).get_by_user_id(customer_user_id)
-    if customer is None or str(order.customer_id) != str(customer.id):
-        from app.core.exceptions import ObjectAccessDeniedError
-        raise ObjectAccessDeniedError()
-
-    if order.payment_status == PaymentStatus.paid:
-        raise SokoFetchException(409, "ALREADY_PAID", "This order has already been paid.")
+    await _assert_customer_owns_order(order, customer_user_id, db)
+    _assert_payable(order)
 
     # Verify with Flutterwave
     try:
@@ -168,29 +226,17 @@ async def verify_card_payment(
     except Exception as exc:
         raise SokoFetchException(402, "PAYMENT_VERIFICATION_FAILED", str(exc))
 
-    # Verify amount matches order total (anti-tampering check)
-    paid_amount = Decimal(str(tx.get("amount", 0)))
-    if paid_amount < order.total:
-        raise SokoFetchException(
-            402, "AMOUNT_MISMATCH",
-            f"Payment amount KES {paid_amount} does not match order total KES {order.total}."
-        )
+    # The charge must be for THIS order, in KES, for at least the order total
+    try:
+        flw_client.validate_transaction_for_order(tx, str(order.id), order.total)
+    except ValueError as exc:
+        raise SokoFetchException(402, "PAYMENT_MISMATCH", str(exc))
 
-    # Record payment
-    payment_repo = PaymentRepo(db)
-    payment = await payment_repo.create(
-        order_id        = order_id,
-        customer_id     = customer_user_id,
-        gateway         = PaymentGateway.flutterwave,
-        gateway_ref     = tx.get("flw_ref"),
-        gateway_payload = tx,
-        amount          = paid_amount,
-        currency        = tx.get("currency", "KES"),
-        status          = TransactionStatus.success,
-        completed_at    = datetime.now(timezone.utc),
-    )
+    # One Flutterwave transaction can only ever pay once
+    if await _flw_tx_already_recorded(tx, db):
+        raise SokoFetchException(409, "TRANSACTION_ALREADY_USED", "This payment has already been used.")
 
-    await _mark_order_paid(order_id, tx.get("flw_ref"), db)
+    payment = await _record_flw_payment(order, tx, customer_user_id, db)
 
     log.info("FLW payment verified | order=%s | tx=%s", order_id, transaction_id)
     return {
@@ -202,20 +248,51 @@ async def verify_card_payment(
 
 # ── Handle Flutterwave webhook ────────────────────────────────────────────────
 async def handle_flw_webhook(body: dict, db: AsyncSession) -> dict:
-    """Process Flutterwave charge.completed webhook."""
+    """
+    Process Flutterwave charge.completed webhook.
+    The webhook body is never trusted: the transaction is re-verified with the
+    Flutterwave API and matched to the order before anything is marked paid.
+    """
     parsed = flw_client.parse_flw_webhook(body)
 
     if parsed["event"] != "charge.completed":
         return {"status": "ignored"}
 
-    if parsed["status"] != "successful":
+    if parsed["status"] != "successful" or not parsed["transaction_id"]:
         log.info("FLW webhook non-success | status=%s | tx_ref=%s",
                  parsed["status"], parsed["tx_ref"])
         return {"status": "ignored"}
 
-    # tx_ref is our order_id (set when customer initiates payment)
-    order_id = parsed["tx_ref"]
-    await _mark_order_paid(order_id, parsed["flw_ref"], db)
+    # Network errors propagate (5xx) so Flutterwave retries the webhook
+    try:
+        tx = await flw_client.verify_payment(parsed["transaction_id"])
+    except ValueError as exc:
+        log.warning("FLW webhook: transaction not verified | tx=%s | %s", parsed["transaction_id"], exc)
+        return {"status": "ignored"}
+
+    # tx_ref is our order_id (set when the app starts the Flutterwave charge)
+    order_id = str(tx.get("tx_ref", ""))
+    try:
+        uuid.UUID(order_id)
+    except ValueError:
+        log.warning("FLW webhook: tx_ref is not an order id | tx_ref=%s", order_id)
+        return {"status": "ignored"}
+
+    order = await OrderRepo(db).get(order_id)
+    if order is None or order.payment_status == PaymentStatus.paid:
+        return {"status": "ignored"}
+
+    try:
+        flw_client.validate_transaction_for_order(tx, str(order.id), order.total)
+    except ValueError as exc:
+        log.warning("FLW webhook: transaction does not match order | order=%s | %s", order_id, exc)
+        return {"status": "ignored"}
+
+    if await _flw_tx_already_recorded(tx, db):
+        return {"status": "ignored"}
+
+    customer = await CustomerRepo(db).get(str(order.customer_id))
+    await _record_flw_payment(order, tx, str(customer.user_id), db)
 
     log.info("FLW webhook processed | order=%s", order_id)
     return {"status": "processed"}
