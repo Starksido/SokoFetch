@@ -263,3 +263,59 @@ class TestEarningsCalculations:
         platform_fee = Decimal("21.60")   # 18% of 120 delivery fee
         total_revenue = commission + platform_fee
         assert total_revenue == Decimal("191.60")
+
+
+# ── Payment ownership ─────────────────────────────────────────────────────────
+# order.customer_id is the customer PROFILE id; the caller passes users.id.
+class TestPaymentOwnership:
+    def _patch_repos(self, order, customer):
+        order_repo = MagicMock()
+        order_repo.get_or_404 = AsyncMock(return_value=order)
+        customer_repo = MagicMock()
+        customer_repo.get_by_user_id = AsyncMock(return_value=customer)
+        return (
+            patch("app.payments.service.OrderRepo", return_value=order_repo),
+            patch("app.payments.service.CustomerRepo", return_value=customer_repo),
+        )
+
+    @pytest.mark.parametrize("fn", ["initiate_mpesa", "verify_card"])
+    async def test_owner_passes_ownership_check(self, fn):
+        from app.payments import service
+        from app.models.order import PaymentStatus
+        from app.core.exceptions import SokoFetchException
+
+        user_id  = str(uuid4())
+        customer = MagicMock(id=uuid4())
+        order    = MagicMock(customer_id=customer.id, payment_status=PaymentStatus.paid)
+        p1, p2 = self._patch_repos(order, customer)
+        with p1, p2, pytest.raises(SokoFetchException) as exc:
+            if fn == "initiate_mpesa":
+                await service.initiate_mpesa_payment(str(uuid4()), "+254712345678", user_id, MagicMock(), MagicMock())
+            else:
+                await service.verify_card_payment(str(uuid4()), "123", user_id, MagicMock())
+        # Reaching the already-paid check proves ownership passed
+        assert exc.value.detail["code"] == "ALREADY_PAID"
+
+    @pytest.mark.parametrize("fn", ["initiate_mpesa", "verify_card"])
+    async def test_account_id_match_is_not_ownership(self, fn):
+        from app.payments import service
+        from app.core.exceptions import ObjectAccessDeniedError
+
+        user_id  = str(uuid4())
+        customer = MagicMock(id=uuid4())
+        order    = MagicMock(customer_id=user_id)   # matches users.id, not profile id
+        p1, p2 = self._patch_repos(order, customer)
+        with p1, p2, pytest.raises(ObjectAccessDeniedError):
+            if fn == "initiate_mpesa":
+                await service.initiate_mpesa_payment(str(uuid4()), "+254712345678", user_id, MagicMock(), MagicMock())
+            else:
+                await service.verify_card_payment(str(uuid4()), "123", user_id, MagicMock())
+
+    async def test_customer_without_profile_is_denied(self):
+        from app.payments import service
+        from app.core.exceptions import ObjectAccessDeniedError
+
+        order = MagicMock(customer_id=uuid4())
+        p1, p2 = self._patch_repos(order, None)
+        with p1, p2, pytest.raises(ObjectAccessDeniedError):
+            await service.verify_card_payment(str(uuid4()), "123", str(uuid4()), MagicMock())

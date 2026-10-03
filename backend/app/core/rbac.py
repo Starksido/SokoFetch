@@ -16,38 +16,77 @@ Usage in route handlers:
     @router.get("/orders/{order_id}")
     async def get_order(order_id: str, user = Depends(get_current_user), db = Depends(get_db)):
         order = await get_order_or_404(order_id, db)
-        assert_owns_order(user, order)   # raises 403 if not authorised
+        profile_id = await get_caller_profile_id(user, db)
+        assert_owns_order(user, order, profile_id)   # raises 403 if not authorised
         return order
+
+Note: orders reference PROFILE ids (customers.id / merchants.id / couriers.id),
+while the JWT "sub" is the users.id. Always resolve the caller's profile id
+before comparing against an order.
 """
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.exceptions import ObjectAccessDeniedError
+from app.core.repository import CustomerRepo, MerchantRepo, CourierRepo
+
+_PROFILE_REPOS = {
+    "customer": CustomerRepo,
+    "merchant": MerchantRepo,
+    "courier":  CourierRepo,
+}
+
+
+# ── Caller profile resolution ─────────────────────────────────────────────────
+async def get_caller_profile_id(user: dict, db: AsyncSession) -> str | None:
+    """
+    Return the caller's role profile id (customers/merchants/couriers.id).
+    Admins have no profile and get None. A non-admin without a profile is denied.
+    """
+    if user["role"] == "admin":
+        return None
+
+    repo_cls = _PROFILE_REPOS.get(user["role"])
+    if repo_cls is None:
+        raise ObjectAccessDeniedError()
+
+    profile = await repo_cls(db).get_by_user_id(user["sub"])
+    if profile is None:
+        raise ObjectAccessDeniedError()
+    return str(profile.id)
 
 
 # ── Order ownership ───────────────────────────────────────────────────────────
-def assert_owns_order(user: dict, order) -> None:
+def assert_owns_order(user: dict, order, profile_id: str | None) -> None:
     """
     A user can view/act on an order only if they are:
       - The customer who placed it
       - The merchant who received it
       - The courier it was assigned to
       - An admin
+
+    profile_id must come from get_caller_profile_id(), not from user["sub"].
     """
     if user["role"] == "admin":
         return
 
-    user_id = user["sub"]
+    if profile_id is None:
+        raise ObjectAccessDeniedError()
 
     if user["role"] == "customer":
-        if str(order.customer_id) != user_id:
+        if str(order.customer_id) != profile_id:
             raise ObjectAccessDeniedError()
 
     elif user["role"] == "merchant":
-        if str(order.merchant_id) != user_id:
+        if str(order.merchant_id) != profile_id:
             raise ObjectAccessDeniedError()
 
     elif user["role"] == "courier":
-        if order.courier_id is None or str(order.courier_id) != user_id:
+        if order.courier_id is None or str(order.courier_id) != profile_id:
             raise ObjectAccessDeniedError()
+
+    else:
+        raise ObjectAccessDeniedError()
 
 
 # ── Merchant ownership ────────────────────────────────────────────────────────

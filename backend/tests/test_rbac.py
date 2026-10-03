@@ -5,11 +5,13 @@ Run with:
     cd backend && pytest tests/test_rbac.py -v
 """
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from app.core import rbac as rbac_module
 from app.core.rbac import (
     assert_owns_order,
+    get_caller_profile_id,
     assert_owns_merchant,
     assert_owns_courier,
     assert_owns_customer,
@@ -51,53 +53,96 @@ def make_customer(user_id=None):
 
 
 # ── Order ownership ───────────────────────────────────────────────────────────
+# Orders store PROFILE ids (customers/merchants/couriers.id); the JWT "sub" is
+# the users.id. assert_owns_order must compare against the resolved profile id.
 class TestOrderOwnership:
     def test_customer_owns_own_order(self):
-        uid = str(uuid4())
-        user  = make_user("customer", uid)
-        order = make_order(customer_id=uid)
-        assert_owns_order(user, order)   # Should not raise
+        profile_id = str(uuid4())
+        user  = make_user("customer")
+        order = make_order(customer_id=profile_id)
+        assert_owns_order(user, order, profile_id)   # Should not raise
 
     def test_customer_cannot_access_other_order(self):
         user  = make_user("customer")
         order = make_order(customer_id=str(uuid4()))   # Different customer
         with pytest.raises(ObjectAccessDeniedError):
-            assert_owns_order(user, order)
+            assert_owns_order(user, order, str(uuid4()))
+
+    def test_customer_account_id_is_not_profile_id(self):
+        # Regression: comparing the order against users.id must not grant access
+        user  = make_user("customer")
+        order = make_order(customer_id=user["sub"])
+        with pytest.raises(ObjectAccessDeniedError):
+            assert_owns_order(user, order, str(uuid4()))
 
     def test_merchant_owns_own_order(self):
-        uid = str(uuid4())
-        user  = make_user("merchant", uid)
-        order = make_order(merchant_id=uid)
-        assert_owns_order(user, order)
+        profile_id = str(uuid4())
+        user  = make_user("merchant")
+        order = make_order(merchant_id=profile_id)
+        assert_owns_order(user, order, profile_id)
 
     def test_merchant_cannot_access_other_merchant_order(self):
         user  = make_user("merchant")
         order = make_order(merchant_id=str(uuid4()))
         with pytest.raises(ObjectAccessDeniedError):
-            assert_owns_order(user, order)
+            assert_owns_order(user, order, str(uuid4()))
 
     def test_courier_owns_assigned_order(self):
-        uid = str(uuid4())
-        user  = make_user("courier", uid)
-        order = make_order(courier_id=uid)
-        assert_owns_order(user, order)
+        profile_id = str(uuid4())
+        user  = make_user("courier")
+        order = make_order(courier_id=profile_id)
+        assert_owns_order(user, order, profile_id)
 
     def test_courier_cannot_access_unassigned_order(self):
         user  = make_user("courier")
         order = make_order(courier_id=str(uuid4()))   # Different courier
         with pytest.raises(ObjectAccessDeniedError):
-            assert_owns_order(user, order)
+            assert_owns_order(user, order, str(uuid4()))
 
     def test_courier_cannot_access_order_with_no_courier(self):
         user  = make_user("courier")
         order = make_order(courier_id=None)
         with pytest.raises(ObjectAccessDeniedError):
-            assert_owns_order(user, order)
+            assert_owns_order(user, order, str(uuid4()))
+
+    def test_missing_profile_is_denied(self):
+        user  = make_user("customer")
+        order = make_order()
+        with pytest.raises(ObjectAccessDeniedError):
+            assert_owns_order(user, order, None)
 
     def test_admin_can_access_any_order(self):
         user  = make_user("admin")
         order = make_order()
-        assert_owns_order(user, order)   # Should not raise
+        assert_owns_order(user, order, None)   # Should not raise
+
+
+# ── Caller profile resolution ─────────────────────────────────────────────────
+class TestCallerProfileId:
+    @pytest.mark.parametrize("role,repo_name", [
+        ("customer", "CustomerRepo"),
+        ("merchant", "MerchantRepo"),
+        ("courier",  "CourierRepo"),
+    ])
+    async def test_resolves_profile_id_for_role(self, role, repo_name):
+        user    = make_user(role)
+        profile = MagicMock(id=uuid4())
+        repo    = MagicMock()
+        repo.get_by_user_id = AsyncMock(return_value=profile)
+        with patch.dict(rbac_module._PROFILE_REPOS, {role: MagicMock(return_value=repo)}):
+            result = await get_caller_profile_id(user, db=MagicMock())
+        assert result == str(profile.id)
+        repo.get_by_user_id.assert_awaited_once_with(user["sub"])
+
+    async def test_admin_has_no_profile(self):
+        assert await get_caller_profile_id(make_user("admin"), db=MagicMock()) is None
+
+    async def test_missing_profile_is_denied(self):
+        repo = MagicMock()
+        repo.get_by_user_id = AsyncMock(return_value=None)
+        with patch.dict(rbac_module._PROFILE_REPOS, {"customer": MagicMock(return_value=repo)}):
+            with pytest.raises(ObjectAccessDeniedError):
+                await get_caller_profile_id(make_user("customer"), db=MagicMock())
 
 
 # ── Merchant ownership ────────────────────────────────────────────────────────

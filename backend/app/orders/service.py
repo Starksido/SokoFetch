@@ -20,7 +20,7 @@ from app.models.customer import Customer
 from app.models.courier import Courier, CourierStatus
 from app.models.user import User
 from app.core.repository import OrderRepo, MerchantRepo, CustomerRepo, MenuItemRepo, CourierRepo, UserRepo
-from app.core.rbac import assert_owns_order, assert_can_transition
+from app.core.rbac import assert_owns_order, assert_can_transition, get_caller_profile_id
 from app.core.exceptions import (
     NotFoundError, ObjectAccessDeniedError, SokoFetchException,
     PaymentBlockedError, CourierNotApprovedError
@@ -182,7 +182,7 @@ async def get_order(
     """Fetch order by ID and enforce object-level access."""
     order_repo = OrderRepo(db)
     order = await order_repo.get_or_404(order_id, "Order")
-    assert_owns_order(user, order)
+    assert_owns_order(user, order, await get_caller_profile_id(user, db))
     return order
 
 
@@ -229,7 +229,7 @@ async def update_order_status(
     """
     order_repo = OrderRepo(db)
     order = await order_repo.get_or_404(order_id, "Order")
-    assert_owns_order(user, order)
+    assert_owns_order(user, order, await get_caller_profile_id(user, db))
 
     new_status = OrderStatus(payload.status)
 

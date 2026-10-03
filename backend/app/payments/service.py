@@ -18,7 +18,7 @@ import redis.asyncio as aioredis
 from app.models.order import Order, PaymentStatus, PaymentMethod
 from app.models.payment import Payment, PaymentGateway, TransactionStatus
 from app.models.merchant import Merchant
-from app.core.repository import OrderRepo, PaymentRepo, MerchantRepo, CourierRepo
+from app.core.repository import OrderRepo, PaymentRepo, MerchantRepo, CourierRepo, CustomerRepo
 from app.core.exceptions import SokoFetchException, NotFoundError, PaymentBlockedError
 from app.payments import mpesa as mpesa_client
 from app.payments import flutterwave as flw_client
@@ -43,7 +43,9 @@ async def initiate_mpesa_payment(
     order_repo = OrderRepo(db)
     order = await order_repo.get_or_404(order_id, "Order")
 
-    if str(order.customer_id) != customer_user_id:
+    # order.customer_id is the customer PROFILE id, not the users.id in the JWT
+    customer = await CustomerRepo(db).get_by_user_id(customer_user_id)
+    if customer is None or str(order.customer_id) != str(customer.id):
         from app.core.exceptions import ObjectAccessDeniedError
         raise ObjectAccessDeniedError()
 
@@ -151,7 +153,9 @@ async def verify_card_payment(
     order_repo = OrderRepo(db)
     order = await order_repo.get_or_404(order_id, "Order")
 
-    if str(order.customer_id) != customer_user_id:
+    # order.customer_id is the customer PROFILE id, not the users.id in the JWT
+    customer = await CustomerRepo(db).get_by_user_id(customer_user_id)
+    if customer is None or str(order.customer_id) != str(customer.id):
         from app.core.exceptions import ObjectAccessDeniedError
         raise ObjectAccessDeniedError()
 
