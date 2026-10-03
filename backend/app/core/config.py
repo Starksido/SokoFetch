@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     OTP_EXPIRE_SECONDS: int = 300       # 5 minutes
     OTP_MAX_ATTEMPTS: int = 5           # per hour per phone
     OTP_RATE_WINDOW_SECONDS: int = 3600 # 1 hour
+    OTP_MAX_VERIFY_ATTEMPTS: int = 5    # wrong codes before the OTP is burned
 
     # ── M-Pesa ────────────────────────────────────────────────────────────────
     MPESA_CONSUMER_KEY: str = ""

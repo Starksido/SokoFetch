@@ -38,6 +38,9 @@ def _otp_key(phone: str, role: str) -> str:
 def _rate_key(phone: str) -> str:
     return f"otp_rate:{_phone_hash(phone)}"
 
+def _fail_key(phone: str, role: str) -> str:
+    return f"otp_fail:{role}:{_phone_hash(phone)}"
+
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 async def check_rate_limit(phone: str, redis: aioredis.Redis) -> None:
@@ -71,6 +74,8 @@ async def generate_otp(phone: str, role: str, redis: aioredis.Redis) -> str:
     key = _otp_key(phone, role)
     # Store as "secret:code" — single-use
     await redis.setex(key, settings.OTP_EXPIRE_SECONDS, f"{secret}:{code}")
+    # Fresh code → fresh wrong-guess budget
+    await redis.delete(_fail_key(phone, role))
 
     logger.info("OTP generated | role=%s | phone_hash=%s", role, _phone_hash(phone))
     return code
@@ -80,7 +85,8 @@ async def generate_otp(phone: str, role: str, redis: aioredis.Redis) -> str:
 async def verify_otp(phone: str, code: str, role: str, redis: aioredis.Redis) -> bool:
     """
     Verify OTP code. Deletes it on success (single-use).
-    Raises InvalidOTPError on failure.
+    Raises InvalidOTPError on failure. After OTP_MAX_VERIFY_ATTEMPTS wrong
+    guesses the code is burned (RateLimitError) and a new one must be requested.
     """
     key = _otp_key(phone, role)
     entry = await redis.get(key)
@@ -100,10 +106,19 @@ async def verify_otp(phone: str, code: str, role: str, redis: aioredis.Redis) ->
             "OTP mismatch | role=%s | phone_hash=%s",
             role, _phone_hash(phone)
         )
+        fail_key = _fail_key(phone, role)
+        fails = await redis.incr(fail_key)
+        if fails == 1:
+            await redis.expire(fail_key, settings.OTP_EXPIRE_SECONDS)
+        if fails >= settings.OTP_MAX_VERIFY_ATTEMPTS:
+            # Burn the code so it cannot be brute-forced
+            await redis.delete(key, fail_key)
+            logger.warning("OTP burned after %d wrong attempts | phone_hash=%s", fails, _phone_hash(phone))
+            raise RateLimitError("Too many incorrect codes. Please request a new code.")
         raise InvalidOTPError()
 
     # Invalidate immediately — single use
-    await redis.delete(key)
+    await redis.delete(key, _fail_key(phone, role))
 
     # Also clear the rate limit counter on success
     await redis.delete(_rate_key(phone))

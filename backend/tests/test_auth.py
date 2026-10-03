@@ -129,6 +129,34 @@ class TestOTP:
             await verify_otp("+254712345678", code, "customer", redis)  # Second use — fails
 
     @pytest.mark.asyncio
+    async def test_code_burned_after_max_wrong_attempts(self, mock_redis):
+        # Regression: verify had no attempt limit, so 6-digit codes were brute-forceable
+        redis, _ = mock_redis
+        from app.auth.otp import generate_otp, verify_otp
+        from app.core.exceptions import InvalidOTPError, RateLimitError
+        code = await generate_otp("+254712345678", "customer", redis)
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(4):
+            with pytest.raises(InvalidOTPError):
+                await verify_otp("+254712345678", wrong, "customer", redis)
+        with pytest.raises(RateLimitError):
+            await verify_otp("+254712345678", wrong, "customer", redis)
+        # The real code no longer works — a new one must be requested
+        with pytest.raises(InvalidOTPError):
+            await verify_otp("+254712345678", code, "customer", redis)
+
+    async def test_new_code_resets_wrong_attempts(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.otp import generate_otp, verify_otp
+        from app.core.exceptions import InvalidOTPError
+        code = await generate_otp("+254712345678", "customer", redis)
+        wrong = "000000" if code != "000000" else "111111"
+        for _ in range(4):
+            with pytest.raises(InvalidOTPError):
+                await verify_otp("+254712345678", wrong, "customer", redis)
+        code = await generate_otp("+254712345678", "customer", redis)
+        assert await verify_otp("+254712345678", code, "customer", redis) is True
+
     async def test_rate_limit_exceeded(self, mock_redis):
         redis, store = mock_redis
         from app.auth.otp import check_rate_limit
