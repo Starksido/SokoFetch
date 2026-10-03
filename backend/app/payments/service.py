@@ -239,7 +239,6 @@ async def _mark_order_paid(order_id: str, payment_ref: str | None, db: AsyncSess
     merchant_repo = MerchantRepo(db)
     merchant = await merchant_repo.get(str(order.merchant_id))
     if merchant:
-        new_pending = Decimal(str(merchant.rating)) # placeholder — use actual pending field
         # Update merchant pending payout
         await db.execute(
             __import__("sqlalchemy").text(

@@ -135,3 +135,18 @@ class TestFieldEncryption:
         phone = "+254712345678"
         encrypted = cipher.encrypt(phone.encode()).decode()
         assert phone not in encrypted
+
+
+# ── Payout balance columns ────────────────────────────────────────────────────
+class TestPayoutColumns:
+    @pytest.mark.parametrize("model_path", [
+        "app.models.merchant.Merchant",
+        "app.models.courier.Courier",
+    ])
+    def test_pending_payout_column_exists(self, model_path):
+        # payments.service._mark_order_paid updates pending_payout via raw SQL
+        import importlib
+        module_name, cls_name = model_path.rsplit(".", 1)
+        model = getattr(importlib.import_module(module_name), cls_name)
+        col = model.__table__.c["pending_payout"]
+        assert not col.nullable

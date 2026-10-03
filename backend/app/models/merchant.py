@@ -70,6 +70,7 @@ class Merchant(Base):
     payout_phone      = Column(EncryptedString(512), nullable=True)   # M-Pesa number
     payout_bank_name  = Column(String(128), nullable=True)
     payout_account    = Column(EncryptedString(512), nullable=True)   # Bank account
+    pending_payout    = Column(Numeric(12, 2), default=0.00, nullable=False)  # Net owed, credited on payment
 
     # ── Status ────────────────────────────────────────────────────────────────
     status     = Column(
