@@ -9,6 +9,8 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
+from app.core.encryption import EncryptedString
+from app.core.encryption import EncryptedString
 
 
 class OrderStatus(str, enum.Enum):
@@ -116,7 +118,8 @@ class Order(Base):
     # ── Proof of delivery ─────────────────────────────────────────────────────
     proof_type          = Column(String(16), nullable=True)  # "photo" | "otp"
     proof_photo_url     = Column(String(512), nullable=True)
-    proof_otp           = Column(String(6), nullable=True)   # Hashed in service
+    proof_otp           = Column(String(6), nullable=True)   # Legacy, no longer written
+    delivery_code       = Column(EncryptedString(512), nullable=True)  # 4-digit handover code, set when paid
     proof_submitted_at  = Column(DateTime(timezone=True), nullable=True)
 
     # ── Status & timing ───────────────────────────────────────────────────────

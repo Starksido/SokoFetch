@@ -48,11 +48,11 @@ class OrderStatusUpdate(BaseModel):
         return v
 
 
-# ── Proof of delivery ─────────────────────────────────────────────────────────
-class ProofOfDeliveryRequest(BaseModel):
-    proof_type:  str = Field(..., pattern="^(photo|otp)$")
-    otp_code:    Optional[str] = Field(None, min_length=4, max_length=6)
-    # photo is uploaded as multipart — not in JSON body
+# ── Delivery code ─────────────────────────────────────────────────────────────
+class DeliveryCodeResponse(BaseModel):
+    """Customer-only: the code to give the courier at handover."""
+    order_id:      str
+    delivery_code: str
 
 
 # ── Rating ────────────────────────────────────────────────────────────────────

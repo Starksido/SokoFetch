@@ -220,8 +220,10 @@ class TestTransitionPermissions:
     def test_courier_can_mark_in_transit(self):
         assert_can_transition(make_user("courier"), "in_transit")
 
-    def test_courier_can_deliver(self):
-        assert_can_transition(make_user("courier"), "delivered")
+    def test_courier_cannot_set_delivered_directly(self):
+        # Delivery requires the customer's code via POST /orders/{id}/proof
+        with pytest.raises(ObjectAccessDeniedError):
+            assert_can_transition(make_user("courier"), "delivered")
 
     def test_customer_can_cancel(self):
         assert_can_transition(make_user("customer"), "cancelled")

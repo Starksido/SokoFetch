@@ -420,13 +420,13 @@ class TestOrderPaymentRules:
         mocks = await self._update(order, "cancelled", "customer")
         mocks[-1].assert_not_awaited()
 
-    async def test_delivery_credits_courier(self):
+    async def test_admin_delivery_override_credits_courier(self):
         from app.models.order import OrderStatus, PaymentStatus
         courier = MagicMock(total_deliveries=3, total_earned=Decimal("500.00"),
                             pending_payout=Decimal("200.00"))
         order = _flow_order(OrderStatus.in_transit, PaymentStatus.paid,
                             courier_id=uuid4(), courier_payout=Decimal("82.00"))
-        mocks = await self._update(order, "delivered", "courier", courier=courier)
+        mocks = await self._update(order, "delivered", "admin", courier=courier)
         kwargs = mocks[6].return_value.update.await_args.kwargs   # CourierRepo
         assert kwargs["total_deliveries"] == 4
         assert kwargs["total_earned"] == Decimal("582.00")
@@ -444,18 +444,156 @@ class TestOrderPaymentRules:
             await service.create_order(str(uuid4()), payload, MagicMock(), MagicMock())
         assert exc.value.detail["code"] == "PAYMENT_METHOD_UNSUPPORTED"
 
-    async def test_proof_of_delivery_credits_courier(self):
-        from app.orders import service
+
+# ── Delivery code & proof of delivery ─────────────────────────────────────────
+def _fake_redis():
+    store = {}
+    r = MagicMock()
+
+    async def get(k):
+        return store.get(k)
+
+    async def incr(k):
+        store[k] = int(store.get(k, 0)) + 1
+        return store[k]
+
+    async def expire(k, ttl):
+        pass
+
+    async def delete(*ks):
+        for k in ks:
+            store.pop(k, None)
+
+    r.get, r.incr, r.expire, r.delete = get, incr, expire, delete
+    return r, store
+
+
+class TestDeliveryCode:
+    def test_new_code_is_four_digits(self):
+        from app.orders.delivery_code import new_delivery_code
+        for _ in range(50):
+            code = new_delivery_code()
+            assert len(code) == 4 and code.isdigit()
+
+    async def test_correct_code_accepted(self):
+        from app.orders.delivery_code import check_delivery_code
+        redis, _ = _fake_redis()
+        await check_delivery_code("o1", "4821", "4821", redis)
+
+    async def test_wrong_code_rejected(self):
+        from app.orders.delivery_code import check_delivery_code
+        from app.core.exceptions import SokoFetchException
+        redis, _ = _fake_redis()
+        with pytest.raises(SokoFetchException) as exc:
+            await check_delivery_code("o1", "4821", "0000", redis)
+        assert exc.value.detail["code"] == "INVALID_DELIVERY_CODE"
+
+    async def test_order_without_code_cannot_be_delivered(self):
+        from app.orders.delivery_code import check_delivery_code
+        from app.core.exceptions import SokoFetchException
+        redis, _ = _fake_redis()
+        with pytest.raises(SokoFetchException):
+            await check_delivery_code("o1", None, "0000", redis)
+
+    async def test_locked_after_repeated_wrong_codes(self):
+        from app.orders.delivery_code import check_delivery_code, MAX_WRONG_ATTEMPTS
+        from app.core.exceptions import SokoFetchException, RateLimitError
+        redis, _ = _fake_redis()
+        for _ in range(MAX_WRONG_ATTEMPTS):
+            with pytest.raises(SokoFetchException):
+                await check_delivery_code("o1", "4821", "0000", redis)
+        # Even the right code is refused during lockout
+        with pytest.raises(RateLimitError):
+            await check_delivery_code("o1", "4821", "4821", redis)
+
+
+class TestProofOfDelivery:
+    def _setup(self, delivery_code="4821"):
         from app.models.order import OrderStatus, PaymentStatus
         courier = MagicMock(id=uuid4(), total_deliveries=0, total_earned=Decimal("0"),
                             pending_payout=Decimal("0"))
         order = _flow_order(OrderStatus.in_transit, PaymentStatus.paid,
                             courier_id=courier.id, courier_payout=Decimal("82.00"))
+        order.delivery_code = delivery_code
+        order_repo   = _flow_repo(get_or_404=order, update=order)
         courier_repo = _flow_repo(get_by_or_404=courier, update=courier)
-        with patch("app.orders.service.OrderRepo", return_value=_flow_repo(get_or_404=order, update=order)), \
+        return order, order_repo, courier_repo
+
+    async def test_correct_code_delivers_and_credits_courier(self):
+        from app.orders import service
+        from app.models.order import OrderStatus
+        order, order_repo, courier_repo = self._setup()
+        redis, _ = _fake_redis()
+        with patch("app.orders.service.OrderRepo", return_value=order_repo), \
              patch("app.orders.service.CourierRepo", return_value=courier_repo):
-            await service.submit_proof_of_delivery(
-                str(order.id), "photo", "u", None, "proof/x.jpg", MagicMock())
-        kwargs = courier_repo.update.await_args.kwargs
-        assert kwargs["total_deliveries"] == 1
-        assert kwargs["pending_payout"] == Decimal("82.00")
+            await service.submit_proof_of_delivery(str(order.id), "u", "4821", None, MagicMock(), redis)
+        assert order_repo.update.await_args.kwargs["status"] == OrderStatus.delivered
+        assert order_repo.update.await_args.kwargs["proof_type"] == "otp"
+        assert courier_repo.update.await_args.kwargs["pending_payout"] == Decimal("82.00")
+
+    async def test_wrong_code_does_not_deliver(self):
+        # Regression: any code used to be accepted
+        from app.orders import service
+        from app.core.exceptions import SokoFetchException
+        order, order_repo, courier_repo = self._setup()
+        redis, _ = _fake_redis()
+        with patch("app.orders.service.OrderRepo", return_value=order_repo), \
+             patch("app.orders.service.CourierRepo", return_value=courier_repo), \
+             pytest.raises(SokoFetchException):
+            await service.submit_proof_of_delivery(str(order.id), "u", "0000", "proof/x.jpg", MagicMock(), redis)
+        order_repo.update.assert_not_awaited()
+        courier_repo.update.assert_not_awaited()
+
+    async def test_photo_alone_is_not_proof(self):
+        from app.orders import service
+        from app.core.exceptions import SokoFetchException
+        order, order_repo, courier_repo = self._setup()
+        redis, _ = _fake_redis()
+        with patch("app.orders.service.OrderRepo", return_value=order_repo), \
+             patch("app.orders.service.CourierRepo", return_value=courier_repo), \
+             pytest.raises(SokoFetchException):
+            await service.submit_proof_of_delivery(str(order.id), "u", "", "proof/x.jpg", MagicMock(), redis)
+        order_repo.update.assert_not_awaited()
+
+    def test_proof_endpoint_takes_form_fields(self):
+        # Regression: the endpoint mixed a JSON body model with a file upload
+        from app.main import app
+        content = app.openapi()["paths"]["/orders/{order_id}/proof"]["post"]["requestBody"]["content"]
+        schema_ref = content["multipart/form-data"]["schema"]["$ref"].split("/")[-1]
+        schema = app.openapi()["components"]["schemas"][schema_ref]
+        assert set(schema["properties"]) == {"otp_code", "photo"}
+        assert schema["required"] == ["otp_code"]
+
+
+class TestCustomerDeliveryCode:
+    async def _get(self, order):
+        from app.orders import service
+        order_repo = _flow_repo(get_or_404=order, update=order)
+        with patch("app.orders.service.OrderRepo", return_value=order_repo), \
+             patch("app.orders.service.assert_owns_order"), \
+             patch("app.orders.service.get_caller_profile_id", new=AsyncMock(return_value="p")):
+            result = await service.get_delivery_code(str(order.id), {"sub": "u", "role": "customer"}, MagicMock())
+        return result, order_repo
+
+    async def test_paid_order_returns_code(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        order = _flow_order(OrderStatus.confirmed, PaymentStatus.paid)
+        order.delivery_code = "4821"
+        result, _ = await self._get(order)
+        assert result["delivery_code"] == "4821"
+
+    async def test_unpaid_order_has_no_code(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        from app.core.exceptions import SokoFetchException
+        order = _flow_order(OrderStatus.pending, PaymentStatus.pending)
+        with pytest.raises(SokoFetchException) as exc:
+            await self._get(order)
+        assert exc.value.detail["code"] == "DELIVERY_CODE_UNAVAILABLE"
+
+    async def test_code_created_for_orders_paid_before_codes_existed(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        order = _flow_order(OrderStatus.confirmed, PaymentStatus.paid)
+        order.delivery_code = None
+        _, order_repo = await self._get(order)
+        code = order_repo.update.await_args.kwargs["delivery_code"]
+        assert len(code) == 4 and code.isdigit()

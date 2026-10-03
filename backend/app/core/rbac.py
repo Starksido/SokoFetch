@@ -147,7 +147,7 @@ TRANSITION_PERMISSIONS: dict[str, set[str]] = {
     "ready_for_pickup": {"merchant"},
     "picked_up":        {"courier"},
     "in_transit":       {"courier"},
-    "delivered":        {"courier"},
+    "delivered":        set(),   # Couriers must use POST /orders/{id}/proof; admins may override
     "cancelled":        {"customer", "merchant", "admin"},
     "delivery_failed":  {"courier", "admin"},
 }

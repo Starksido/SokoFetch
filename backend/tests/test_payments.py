@@ -602,3 +602,17 @@ class TestRefundFlow:
             await service._mark_order_paid(str(order.id), "REF", db)
         sql = " ".join(str(c.args[0]) for c in db.execute.await_args_list)
         assert "merchants" in sql and "couriers" not in sql
+
+    async def test_mark_paid_issues_delivery_code(self):
+        from app.payments import service
+        from app.models.order import PaymentStatus
+        order = _order(payment_status=PaymentStatus.pending)
+        order.subtotal, order.merchant_commission = Decimal("800"), Decimal("160")
+        order_repo = _repo(get=order, update=order)
+        db = MagicMock()
+        db.execute = AsyncMock()
+        with patch("app.payments.service.OrderRepo", return_value=order_repo), \
+             patch("app.payments.service.MerchantRepo", return_value=_repo(get=None)):
+            await service._mark_order_paid(str(order.id), "REF", db)
+        code = order_repo.update.await_args.kwargs["delivery_code"]
+        assert len(code) == 4 and code.isdigit()

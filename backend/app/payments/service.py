@@ -25,6 +25,8 @@ from app.core.exceptions import (
     SokoFetchException, NotFoundError, PaymentBlockedError, ObjectAccessDeniedError,
 )
 from app.auth.otp import validate_phone
+from app.orders.delivery_code import new_delivery_code
+from app.orders.delivery_code import new_delivery_code
 from app.payments import mpesa as mpesa_client
 from app.payments import flutterwave as flw_client
 from app.orders.fraud import check_fraud
@@ -310,6 +312,7 @@ async def _mark_order_paid(order_id: str, payment_ref: str | None, db: AsyncSess
     await order_repo.update(order,
         payment_status = PaymentStatus.paid,
         payment_ref    = payment_ref,
+        delivery_code  = new_delivery_code(),
     )
 
     # Credit merchant pending payout (net of commission).

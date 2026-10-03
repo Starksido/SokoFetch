@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, UploadFile, File
+from fastapi import APIRouter, Depends, Query, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
@@ -10,7 +10,7 @@ from app.schemas.order import (
     OrderCreateRequest,
     OrderStatusUpdate,
     OrderRatingRequest,
-    ProofOfDeliveryRequest,
+    DeliveryCodeResponse,
     OrderDetail,
     OrderSummary,
 )
@@ -143,34 +143,56 @@ async def cancel_order(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# GET /orders/{order_id}/delivery-code
+# Customer reads the code to give the courier at handover
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get(
+    "/{order_id}/delivery-code",
+    response_model=DeliveryCodeResponse,
+    summary="Get delivery code (customer)",
+    description="The 4-digit code the customer gives the courier. Available once the order is paid.",
+)
+async def get_delivery_code(
+    order_id: str,
+    user:     dict         = Depends(require_role("customer")),
+    db:       AsyncSession = Depends(get_db),
+):
+    return await service.get_delivery_code(order_id=order_id, user=user, db=db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # POST /orders/{order_id}/proof
-# Courier submits proof of delivery (OTP or photo)
+# Courier submits proof of delivery (multipart form: otp_code + optional photo)
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post(
     "/{order_id}/proof",
     response_model=OrderDetail,
     summary="Submit proof of delivery",
+    description=(
+        "Multipart form. `otp_code` is the customer's 4-digit delivery code and is "
+        "always required; `photo` is optional extra evidence."
+    ),
 )
 async def submit_proof(
     order_id:  str,
-    body:      ProofOfDeliveryRequest,
+    otp_code:  str               = Form(..., pattern=r"^\d{4}$"),
     photo:     UploadFile | None = File(None),
     user:      dict              = Depends(require_role("courier")),
     db:        AsyncSession      = Depends(get_db),
+    redis:     aioredis.Redis    = Depends(get_redis),
 ):
     photo_url = None
     if photo:
-        # In production: upload to S3 and return URL
-        # For now: use filename as placeholder
+        # Photos are not stored yet — only the filename is recorded
         photo_url = f"proof/{order_id}/{photo.filename}"
 
     return await service.submit_proof_of_delivery(
         order_id=order_id,
-        proof_type=body.proof_type,
         courier_user_id=user["sub"],
-        otp_code=body.otp_code,
+        delivery_code=otp_code,
         photo_url=photo_url,
         db=db,
+        redis=redis,
     )
 
 

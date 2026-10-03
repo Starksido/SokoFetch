@@ -4,7 +4,6 @@ Orders Service
 All order business logic lives here.
 Routers call service functions; service functions use repositories and models.
 """
-import hashlib
 import logging
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -29,6 +28,8 @@ from app.orders.pricing import calculate_order_pricing
 from app.orders.fraud import check_fraud
 from app.orders import notifications
 from app.payments.service import refund_order
+from app.orders.delivery_code import check_delivery_code, new_delivery_code
+from app.orders.delivery_code import check_delivery_code, new_delivery_code
 from app.schemas.order import OrderCreateRequest, OrderStatusUpdate, OrderRatingRequest
 
 log = logging.getLogger("alphabet.orders.service")
@@ -357,13 +358,16 @@ async def assign_courier(
 # ── Proof of delivery ─────────────────────────────────────────────────────────
 async def submit_proof_of_delivery(
     order_id: str,
-    proof_type: str,
     courier_user_id: str,
-    otp_code: str | None,
+    delivery_code: str,
     photo_url: str | None,
     db: AsyncSession,
+    redis: aioredis.Redis,
 ) -> Order:
-    """Courier submits proof; triggers DELIVERED status if valid."""
+    """
+    Courier submits the customer's delivery code (always required) and an
+    optional photo; a correct code moves the order to DELIVERED.
+    """
     order_repo   = OrderRepo(db)
     courier_repo = CourierRepo(db)
 
@@ -377,37 +381,42 @@ async def submit_proof_of_delivery(
     if order.status != OrderStatus.in_transit:
         raise SokoFetchException(422, "ORDER_NOT_IN_TRANSIT", "Order must be IN_TRANSIT to submit proof.")
 
-    if proof_type == "otp":
-        if not otp_code:
-            raise SokoFetchException(400, "OTP_REQUIRED", "OTP code is required for OTP proof.")
-        # In production: compare against a hashed OTP stored when the order was placed
-        # For now we store it directly (hash it in production)
-        updates = {
-            "proof_type":          "otp",
-            "proof_otp":           hashlib.sha256(otp_code.encode()).hexdigest()[:16],
-            "proof_submitted_at":  datetime.now(timezone.utc),
-            "status":              OrderStatus.delivered,
-            "delivered_at":        datetime.now(timezone.utc),
-        }
-    elif proof_type == "photo":
-        if not photo_url:
-            raise SokoFetchException(400, "PHOTO_REQUIRED", "Photo URL is required for photo proof.")
-        updates = {
-            "proof_type":          "photo",
-            "proof_photo_url":     photo_url,
-            "proof_submitted_at":  datetime.now(timezone.utc),
-            "status":              OrderStatus.delivered,
-            "delivered_at":        datetime.now(timezone.utc),
-        }
-    else:
-        raise SokoFetchException(400, "INVALID_PROOF_TYPE", "Proof type must be 'otp' or 'photo'.")
+    # Raises on a wrong code; locks the order out after repeated wrong guesses
+    await check_delivery_code(str(order.id), order.delivery_code, delivery_code, redis)
 
-    order = await order_repo.update(order, **updates)
+    now = datetime.now(timezone.utc)
+    order = await order_repo.update(
+        order,
+        proof_type         = "otp+photo" if photo_url else "otp",
+        proof_photo_url    = photo_url,
+        proof_submitted_at = now,
+        status             = OrderStatus.delivered,
+        delivered_at       = now,
+    )
 
     await _complete_delivery(order, courier, db)
 
-    log.info("Proof submitted | order=%s | type=%s", order_id, proof_type)
+    log.info("Proof submitted | order=%s | photo=%s", order_id, bool(photo_url))
     return order
+
+
+# ── Delivery code (customer) ──────────────────────────────────────────────────
+async def get_delivery_code(order_id: str, user: dict, db: AsyncSession) -> dict:
+    """Return the code the customer gives the courier. Only once the order is paid."""
+    order_repo = OrderRepo(db)
+    order = await order_repo.get_or_404(order_id, "Order")
+    assert_owns_order(user, order, await get_caller_profile_id(user, db))
+
+    if order.payment_status != PaymentStatus.paid:
+        raise SokoFetchException(
+            409, "DELIVERY_CODE_UNAVAILABLE", "The delivery code is available once the order is paid."
+        )
+
+    if not order.delivery_code:
+        # Orders paid before delivery codes existed
+        order = await order_repo.update(order, delivery_code=new_delivery_code())
+
+    return {"order_id": str(order.id), "delivery_code": order.delivery_code}
 
 
 # ── Delivery completion ───────────────────────────────────────────────────────
