@@ -178,6 +178,9 @@ class Order {
   });
 
   bool get isPending        => status == 'pending';
+  bool get isPaid           => paymentStatus == 'paid';
+  /// Only paid orders can be accepted (the backend rejects confirming unpaid ones).
+  bool get awaitingPayment  => isPending && !isPaid;
   bool get isConfirmed      => status == 'confirmed';
   bool get isPreparing      => status == 'preparing';
   bool get isReadyForPickup => status == 'ready_for_pickup';

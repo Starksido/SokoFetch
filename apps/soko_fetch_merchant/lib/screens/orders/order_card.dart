@@ -22,7 +22,28 @@ class _OrderCardState extends State<OrderCard> {
   @override
   void initState() {
     super.initState();
-    if (widget.order.isPending) _startCountdown();
+    _syncCountdown();
+  }
+
+  @override
+  void didUpdateWidget(covariant OrderCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncCountdown();
+  }
+
+  /// The accept countdown runs only while the order is pending AND paid —
+  /// unpaid orders can't be accepted yet, so they must not be auto-declined
+  /// while the customer is still paying. It starts when this card first sees
+  /// the order as paid (there is no paid-at time from the server).
+  void _syncCountdown() {
+    final o = widget.order;
+    final shouldRun = o.isPending && o.isPaid;
+    if (shouldRun && _countdown == null) {
+      _startCountdown();
+    } else if (!shouldRun) {
+      _countdown?.cancel();
+      _countdown = null;
+    }
   }
 
   void _startCountdown() {
@@ -90,7 +111,7 @@ class _OrderCardState extends State<OrderCard> {
                   ]),
             ),
             _StatusChip(status: o.status),
-            if (o.isPending) ...[
+            if (o.isPending && o.isPaid) ...[
               const SizedBox(width: 8),
               _CountdownBadge(seconds: _secondsLeft),
             ],
@@ -165,6 +186,35 @@ class _OrderCardState extends State<OrderCard> {
   }
 
   Widget _buildActions(Order o) {
+    if (o.awaitingPayment) {
+      return Row(children: [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: () => _updateStatus('cancelled',
+                reason: 'Merchant declined'),
+            style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: AppTheme.red),
+                foregroundColor: AppTheme.red),
+            child: const Text('Decline'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        const Expanded(
+          flex: 2,
+          child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.hourglass_top_rounded,
+                    color: AppTheme.gold, size: 18),
+                SizedBox(width: 6),
+                Text('Awaiting payment',
+                    style: TextStyle(
+                        color: AppTheme.mgray, fontWeight: FontWeight.w600)),
+              ]),
+        ),
+      ]);
+    }
+
     if (o.isPending) {
       return Row(children: [
         Expanded(

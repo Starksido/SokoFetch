@@ -182,6 +182,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   )
                 else
                   ...pending.map((order) => OrderCard(
+                        key: ValueKey(order.id),
                         order: order,
                         onStatusChanged: () =>
                             ref.invalidate(liveOrdersProvider),
@@ -197,6 +198,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   )
                 else
                   ...toPrep.map((order) => OrderCard(
+                        key: ValueKey(order.id),
                         order: order,
                         onStatusChanged: () =>
                             ref.invalidate(liveOrdersProvider),
@@ -206,6 +208,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   _SectionHeader(title: 'In Progress', count: active.length),
                   const SizedBox(height: 12),
                   ...active.map((order) => OrderCard(
+                        key: ValueKey(order.id),
                         order: order,
                         onStatusChanged: () =>
                             ref.invalidate(liveOrdersProvider),

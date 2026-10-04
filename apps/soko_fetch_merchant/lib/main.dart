@@ -10,6 +10,7 @@ import 'screens/dashboard/dashboard_screen.dart';
 import 'screens/menu/menu_screen.dart';
 import 'screens/earnings/earnings_screen.dart';
 import 'screens/profile/profile_screen.dart';
+import 'screens/onboarding/onboarding_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -45,6 +46,9 @@ class MerchantApp extends StatelessWidget {
           case '/dashboard':
             return MaterialPageRoute(
                 builder: (_) => const MerchantShell(), settings: settings);
+          case '/onboarding':
+            return MaterialPageRoute(
+                builder: (_) => const OnboardingScreen(), settings: settings);
           default:
             return MaterialPageRoute(
                 builder: (_) => const MerchantShell(), settings: settings);
@@ -72,8 +76,16 @@ class _SplashGateState extends State<_SplashGate> {
     await Future.delayed(const Duration(milliseconds: 800));
     if (!mounted) return;
     final loggedIn = await ApiClient.isAuthenticated;
-    Navigator.pushReplacementNamed(
-        context, loggedIn ? '/dashboard' : '/auth/phone');
+    var destination = '/auth/phone';
+    if (loggedIn) {
+      try {
+        destination = await ApiClient.instance.postLoginRoute();
+      } catch (_) {
+        destination = '/dashboard'; // Offline etc. — screens show their own errors
+      }
+    }
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, destination);
   }
 
   @override

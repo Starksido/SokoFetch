@@ -162,8 +162,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
         role:    tokens.user.role,
       );
       ref.read(authProvider.notifier).setUser(tokens.user);
+      final destination = await ApiClient.instance.postLoginRoute();
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/dashboard');
+      Navigator.pushReplacementNamed(context, destination);
     } on DioException catch (e) {
       final msg = (e.response?.data as Map?)?['detail']?['message']
           as String? ?? 'Invalid OTP.';

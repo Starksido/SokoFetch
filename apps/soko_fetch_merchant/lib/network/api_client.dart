@@ -62,6 +62,17 @@ class ApiClient {
     }
   }
 
+  /// '/dashboard' if this account has a shop, '/onboarding' if not.
+  Future<String> postLoginRoute() async {
+    try {
+      await get('/merchant/me');
+      return '/dashboard';
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return '/onboarding';
+      rethrow;
+    }
+  }
+
   Future<Response> get(String path, {Map<String, dynamic>? params}) =>
       dio.get(path, queryParameters: params);
   Future<Response> post(String path, {dynamic data}) =>
