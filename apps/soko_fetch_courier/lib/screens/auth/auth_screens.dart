@@ -130,8 +130,9 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
       final tokens = AuthTokens.fromJson(resp.data as Map<String, dynamic>);
       await ApiClient.saveTokens(access: tokens.accessToken, refresh: tokens.refreshToken, userId: tokens.user.userId);
       ref.read(authProvider.notifier).setUser(tokens.user);
+      final destination = await ApiClient.instance.postLoginRoute();
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/home');
+      Navigator.pushReplacementNamed(context, destination);
     } on DioException catch (e) {
       setState(() { _error = (e.response?.data as Map?)?['detail']?['message'] as String? ?? 'Invalid OTP.'; _loading = false; });
       _ctrl.clear();

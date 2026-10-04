@@ -53,6 +53,17 @@ class ApiClient {
     } catch (_) { return false; }
   }
 
+  /// '/home' if this account has a courier profile, '/onboarding' if not.
+  Future<String> postLoginRoute() async {
+    try {
+      await get('/courier/me');
+      return '/home';
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return '/onboarding';
+      rethrow;
+    }
+  }
+
   Future<Response> get(String path, {Map<String, dynamic>? params}) =>
       dio.get(path, queryParameters: params);
   Future<Response> post(String path, {dynamic data}) => dio.post(path, data: data);

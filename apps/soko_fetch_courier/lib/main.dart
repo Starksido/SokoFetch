@@ -10,6 +10,7 @@ import 'screens/documents/documents_screen.dart';
 import 'screens/delivery/proof_screen.dart';
 import 'screens/earnings/earnings_screen.dart';
 import 'screens/profile/profile_screen.dart';
+import 'screens/onboarding/onboarding_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +39,7 @@ class CourierApp extends StatelessWidget {
         case '/home':         return _r(const CourierShell(), s);
         case '/documents':    return _r(const DocumentsScreen(), s);
         case '/delivery-proof': return _r(const ProofOfDeliveryScreen(), s);
+        case '/onboarding':   return _r(const OnboardingScreen(), s);
         default:              return _r(const CourierShell(), s);
       }
     },
@@ -61,7 +63,16 @@ class _SplashGateState extends State<_SplashGate> {
     Future.delayed(const Duration(milliseconds: 900), () async {
       if (!mounted) return;
       final ok = await ApiClient.isAuthenticated;
-      Navigator.pushReplacementNamed(context, ok ? '/home' : '/auth/phone');
+      var destination = '/auth/phone';
+      if (ok) {
+        try {
+          destination = await ApiClient.instance.postLoginRoute();
+        } catch (_) {
+          destination = '/home'; // Offline etc. — screens show their own errors
+        }
+      }
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, destination);
     });
   }
 

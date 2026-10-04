@@ -19,7 +19,11 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
+  // Assignments arrive server-side; without push, poll while online.
+  static const _orderPollInterval = Duration(seconds: 15);
+
   Timer? _locationTimer;
+  Timer? _orderPollTimer;
   String? _activeOrderId;
   bool _toggling = false;
 
@@ -52,8 +56,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ref.read(onlineProvider.notifier).set(true);
         WakelockPlus.enable();
         _startLocationUpdates(courierId);
+        _startOrderPolling();
       } else {
         _locationTimer?.cancel();
+        _orderPollTimer?.cancel();
         await ApiClient.instance.put('/courier/offline');
         ref.read(onlineProvider.notifier).set(false);
         WakelockPlus.disable();
@@ -81,6 +87,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     });
   }
 
+  void _startOrderPolling() {
+    _orderPollTimer?.cancel();
+    _orderPollTimer = Timer.periodic(_orderPollInterval, (_) {
+      if (mounted) ref.invalidate(activeOrderProvider);
+    });
+  }
+
   void _showSnack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
@@ -88,6 +101,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void dispose() {
     _locationTimer?.cancel();
+    _orderPollTimer?.cancel();
     WakelockPlus.disable();
     super.dispose();
   }
