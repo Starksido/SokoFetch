@@ -33,6 +33,17 @@ from app.core.encryption import encrypt_document
 log = logging.getLogger("alphabet.courier.service")
 
 
+# ── Eager-load documents for CourierProfileResponse ───────────────────────────
+async def _with_documents(courier: Courier, db: AsyncSession) -> Courier:
+    """
+    CourierProfileResponse serialises documents. A lazy load during response
+    serialisation raises MissingGreenlet under AsyncSession (→ 500), so load it
+    explicitly before returning.
+    """
+    await db.refresh(courier, attribute_names=["documents"])
+    return courier
+
+
 # ── Get profile ───────────────────────────────────────────────────────────────
 async def get_my_profile(user_id: str, db: AsyncSession) -> Courier:
     repo = CourierRepo(db)
@@ -72,7 +83,7 @@ async def update_profile(user_id: str, payload, db: AsyncSession) -> Courier:
             await user_repo.update(user, fcm_token=fcm_token)
 
     courier = await repo.update(courier, **updates)
-    return courier
+    return await _with_documents(courier, db)
 
 
 # ── Document upload ───────────────────────────────────────────────────────────
@@ -193,7 +204,7 @@ async def set_online_status(
         await redis.delete(f"location:courier:{courier.id}")
 
     log.info("Courier %s | id=%s", "online" if is_online else "offline", courier.id)
-    return courier
+    return await _with_documents(courier, db)
 
 
 # ── Location update ───────────────────────────────────────────────────────────

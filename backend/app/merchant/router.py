@@ -8,6 +8,7 @@ from app.schemas.merchant import (
     MerchantOnboardRequest,
     MerchantUpdateRequest,
     MerchantDetail,
+    MerchantPublicDetail,
     MerchantSummary,
     MenuItemCreate,
     MenuItemUpdate,
@@ -224,7 +225,7 @@ async def browse_merchants(
 # ── GET /merchant/{merchant_id}/menu ─────────────────────────────────────────
 @router.get(
     "/{merchant_id}/menu",
-    response_model=MerchantDetail,
+    response_model=MerchantPublicDetail,
     summary="Get merchant menu",
     description="Returns merchant profile and all available menu items. Customer-facing.",
 )

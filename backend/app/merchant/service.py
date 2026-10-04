@@ -58,6 +58,17 @@ async def onboard_merchant(
     )
 
     log.info("Merchant onboarded | id=%s | name=%s", merchant.id, merchant.shop_name)
+    return await _with_menu(merchant, db)
+
+
+# ── Eager-load menu for MerchantDetail responses ──────────────────────────────
+async def _with_menu(merchant: Merchant, db: AsyncSession) -> Merchant:
+    """
+    MerchantDetail serialises menu_items. A lazy load during response
+    serialisation raises MissingGreenlet under AsyncSession (→ 500), so load it
+    explicitly before returning.
+    """
+    await db.refresh(merchant, attribute_names=["menu_items"])
     return merchant
 
 
@@ -87,7 +98,7 @@ async def update_merchant(
     merchant = await repo.update(merchant, **updates)
 
     log.info("Merchant updated | id=%s", merchant.id)
-    return merchant
+    return await _with_menu(merchant, db)
 
 
 # ── Toggle open/closed ────────────────────────────────────────────────────────
@@ -96,7 +107,7 @@ async def toggle_open(user_id: str, is_open: bool, db: AsyncSession) -> Merchant
     merchant = await repo.get_by_or_404("Merchant", user_id=user_id)
     merchant = await repo.update(merchant, is_open=is_open)
     log.info("Merchant %s | id=%s", "opened" if is_open else "closed", merchant.id)
-    return merchant
+    return await _with_menu(merchant, db)
 
 
 # ── Menu: list all items ──────────────────────────────────────────────────────
@@ -281,6 +292,9 @@ async def list_active_merchants(
 async def get_merchant_menu(merchant_id: str, db: AsyncSession) -> tuple[Merchant, list[MenuItem]]:
     merchant_repo = MerchantRepo(db)
     merchant      = await merchant_repo.get_or_404(merchant_id, "Merchant")
+    if merchant.status != MerchantStatus.active:
+        # Pending/suspended shops are not visible to customers
+        raise NotFoundError("Merchant")
     item_repo     = MenuItemRepo(db)
     items         = await item_repo.get_available_for_merchant(str(merchant.id))
     return merchant, items

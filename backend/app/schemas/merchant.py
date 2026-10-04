@@ -95,6 +95,15 @@ class MerchantSummary(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class MerchantPublicDetail(MerchantSummary):
+    """Customer-facing shop page — no payout or commission details."""
+    description:      Optional[str]
+    operating_hours:  Optional[dict]
+    menu_items:       List[MenuItemResponse] = []
+
+    model_config = {"from_attributes": True}
+
+
 class MerchantDetail(MerchantSummary):
     """Full detail — includes menu and financial info for the merchant themselves."""
     commission_rate:  Decimal
