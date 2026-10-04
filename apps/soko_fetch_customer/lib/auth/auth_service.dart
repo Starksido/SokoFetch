@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:local_auth/local_auth.dart';
 import '../models/models.dart';
 import '../network/secure_client.dart';
@@ -53,6 +54,19 @@ class AuthService {
     );
 
     return tokens;
+  }
+
+  // -- Where to go after login --------------------------------------------------
+  /// '/home' if this account already has a customer profile, otherwise
+  /// '/onboarding'. Orders cannot be placed without a profile.
+  Future<String> postLoginRoute() async {
+    try {
+      await SecureApiClient.instance.get('/customer/me');
+      return '/home';
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) return '/onboarding';
+      rethrow;
+    }
   }
 
   // -- Customer onboarding ------------------------------------------------------

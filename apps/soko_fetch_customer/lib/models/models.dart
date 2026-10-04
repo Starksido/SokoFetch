@@ -252,6 +252,55 @@ class Order {
       );
 }
 
+// ── Order summary (GET /orders list item) ─────────────────────────────────────
+class OrderSummary {
+  final String id;
+  final String merchantId;
+  final String? merchantName;
+  final String status;
+  final double total;
+  final int itemCount;
+  final String paymentMethod;
+  final String paymentStatus;
+  final int? customerRating;
+  final DateTime createdAt;
+
+  const OrderSummary({
+    required this.id,
+    required this.merchantId,
+    this.merchantName,
+    required this.status,
+    required this.total,
+    required this.itemCount,
+    required this.paymentMethod,
+    required this.paymentStatus,
+    this.customerRating,
+    required this.createdAt,
+  });
+
+  bool get isActive => ![
+        'delivered',
+        'cancelled',
+        'delivery_failed',
+      ].contains(status);
+
+  bool get isDelivered => status == 'delivered';
+  bool get canRate => isDelivered && customerRating == null;
+
+  factory OrderSummary.fromJson(Map<String, dynamic> j) => OrderSummary(
+        id:             j['id'] as String,
+        merchantId:     j['merchant_id'] as String,
+        merchantName:   j['merchant_name'] as String?,
+        status:         j['status'] as String,
+        total:          parseNum(j['total']),
+        itemCount:      (j['item_count'] as num?)?.toInt() ?? 0,
+        paymentMethod:  j['payment_method'] as String,
+        paymentStatus:  j['payment_status'] as String,
+        customerRating: (j['customer_rating'] as num?)?.toInt(),
+        createdAt:      DateTime.parse(j['created_at'] as String),
+      );
+}
+
 // ── Courier location ──────────────────────────────────────────────────────────
 class CourierLocation {
   final double latitude;

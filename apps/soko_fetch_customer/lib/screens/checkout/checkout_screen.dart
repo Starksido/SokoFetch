@@ -139,13 +139,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
                   icon: Icons.phone_android,
                   onChanged: (v) => setState(() => _paymentMethod = v!),
                 ),
-                _PaymentOption(
-                  value: 'card',
-                  groupValue: _paymentMethod,
-                  label: 'Debit / Credit Card',
-                  icon: Icons.credit_card,
-                  onChanged: (v) => setState(() => _paymentMethod = v!),
-                ),
+                // Card is hidden until the Flutterwave SDK + /payments/card/verify
+                // are wired up — selecting it used to skip payment entirely.
               ],
             ),
           ),

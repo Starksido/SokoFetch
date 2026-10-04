@@ -60,7 +60,7 @@ class OrdersScreen extends ConsumerWidget {
 }
 
 class _OrderCard extends StatelessWidget {
-  final Order order;
+  final OrderSummary order;
   const _OrderCard({required this.order});
 
   Color get _statusColor {
@@ -144,7 +144,7 @@ class _OrderCard extends StatelessWidget {
               const SizedBox(height: 8),
               // Items summary
               Text(
-                '${order.items.length} item(s)  •  KES ${order.total.toStringAsFixed(0)}',
+                '${order.itemCount} item(s)  •  KES ${order.total.toStringAsFixed(0)}',
                 style: const TextStyle(color: AppTheme.mgray, fontSize: 13),
               ),
               const SizedBox(height: 4),

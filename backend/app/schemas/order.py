@@ -79,6 +79,7 @@ class OrderSummary(BaseModel):
     item_count:      int
     payment_method:  str
     payment_status:  str
+    customer_rating: Optional[int] = None
     created_at:      datetime
 
     model_config = {"from_attributes": True}

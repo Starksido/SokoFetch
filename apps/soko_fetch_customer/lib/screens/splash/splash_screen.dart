@@ -37,10 +37,16 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     if (isLoggedIn) {
       // Try biometric unlock — go to home on success, phone screen on failure
       final bioPassed = await AuthService.instance.authenticateWithBiometrics();
+      var destination = '/auth/phone';
+      if (bioPassed) {
+        try {
+          destination = await AuthService.instance.postLoginRoute();
+        } catch (_) {
+          destination = '/home'; // Offline etc. — screens show their own errors
+        }
+      }
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed(
-        bioPassed ? '/home' : '/auth/phone',
-      );
+      Navigator.of(context).pushReplacementNamed(destination);
     } else {
       Navigator.of(context).pushReplacementNamed('/auth/phone');
     }

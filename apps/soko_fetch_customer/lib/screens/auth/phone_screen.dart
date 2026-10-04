@@ -53,8 +53,9 @@ class _PhoneScreenState extends State<PhoneScreen> {
         return; // user cancelled
       }
       await AuthService.instance.signInWithGoogle(result.idToken);
+      final destination = await AuthService.instance.postLoginRoute();
       if (!mounted) return;
-      Navigator.of(context).pushReplacementNamed('/home');
+      Navigator.of(context).pushReplacementNamed(destination);
     } on DioException catch (e) {
       final msg = (e.response?.data as Map?)?['detail']?['message']
           as String? ?? 'Google sign-in failed. Please try again.';

@@ -25,6 +25,7 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
   StreamSubscription? _wsSub;
   late String _orderId;
   Order? _order;
+  String? _deliveryCode;
   bool _loadingOrder = true;
   bool _initialized = false;
 
@@ -60,8 +61,25 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
         _loadingOrder = false;
         _rebuildMarkers();
       });
+      _loadDeliveryCode();
     } catch (_) {
       if (mounted) setState(() => _loadingOrder = false);
+    }
+  }
+
+  /// The rider needs this code to complete delivery. Only exists once paid.
+  Future<void> _loadDeliveryCode() async {
+    final order = _order;
+    if (_deliveryCode != null || order == null) return;
+    if (order.paymentStatus != 'paid' || !order.isActive) return;
+    try {
+      final resp =
+          await SecureApiClient.instance.get('/orders/$_orderId/delivery-code');
+      if (!mounted) return;
+      setState(() => _deliveryCode =
+          (resp.data as Map<String, dynamic>)['delivery_code'] as String?);
+    } catch (_) {
+      // Retried on the next poll
     }
   }
 
@@ -219,6 +237,7 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
                   )
                 : _TrackingSheet(
                     order: _order,
+                    deliveryCode: _deliveryCode,
                     statusLabel: _statusLabels[status] ?? status,
                     etaLabel: eta != null
                         ? '$eta mins'
@@ -344,6 +363,7 @@ class _MapStatusPill extends StatelessWidget {
 
 class _TrackingSheet extends StatelessWidget {
   final Order? order;
+  final String? deliveryCode;
   final String statusLabel;
   final String etaLabel;
   final double progress;
@@ -352,6 +372,7 @@ class _TrackingSheet extends StatelessWidget {
 
   const _TrackingSheet({
     required this.order,
+    this.deliveryCode,
     required this.statusLabel,
     required this.etaLabel,
     required this.progress,
@@ -408,6 +429,14 @@ class _TrackingSheet extends StatelessWidget {
             const SizedBox(height: 20),
             _ProgressSteps(progress: progress),
             const SizedBox(height: 18),
+            if (deliveryCode != null && !isTerminal) ...[
+              _SummaryRow(
+                icon: Icons.lock_outline_rounded,
+                label: 'Delivery code — give this to your rider',
+                value: deliveryCode!,
+              ),
+              const SizedBox(height: 10),
+            ],
             if (order != null) ...[
               _SummaryRow(
                 icon: Icons.receipt_long_rounded,

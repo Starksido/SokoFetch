@@ -62,8 +62,8 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
     try {
       final tokens = await AuthService.instance.verifyOtp(_phone, code);
       ref.read(authProvider.notifier).setUser(tokens.user);
+      final destination = await AuthService.instance.postLoginRoute();
       if (!mounted) return;
-      final destination = tokens.user.isNew ? '/onboarding' : '/home';
       Navigator.of(context).pushReplacementNamed(destination);
     } on DioException catch (e) {
       final msg = (e.response?.data as Map?)?['detail']?['message']

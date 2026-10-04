@@ -92,10 +92,10 @@ final merchantDetailProvider = FutureProvider.family<Merchant, String>((ref, mer
 });
 
 // ── Orders ─────────────────────────────────────────────────────────────────────
-final ordersProvider = FutureProvider<List<Order>>((ref) async {
+final ordersProvider = FutureProvider<List<OrderSummary>>((ref) async {
   final resp = await SecureApiClient.instance.get('/orders');
   final list = resp.data as List<dynamic>;
-  return list.map((e) => Order.fromJson(e as Map<String, dynamic>)).toList();
+  return list.map((e) => OrderSummary.fromJson(e as Map<String, dynamic>)).toList();
 });
 
 final orderDetailProvider = FutureProvider.family<Order, String>((ref, orderId) async {
