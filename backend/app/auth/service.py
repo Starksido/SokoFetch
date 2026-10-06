@@ -9,9 +9,12 @@ import redis.asyncio as aioredis
 from app.models.user import User, UserRole
 from app.auth.otp import generate_otp, verify_otp, check_rate_limit, validate_phone
 from app.auth.sms import send_otp_sms
-from app.auth.jwt import create_token_pair, decode_token, revoke_token
+from app.auth.jwt import (
+    create_token_pair, decode_token, revoke_token,
+    claim_refresh_token, revoke_all_user_tokens,
+)
 from app.schemas.auth import UserProfile, TokenResponse
-from app.core.exceptions import InvalidTokenError
+from app.core.exceptions import AccountDisabledError, InvalidTokenError, RevokedTokenError
 
 from app.core.config import settings
 from app.core.exceptions import SokoFetchException
@@ -80,6 +83,8 @@ async def verify_and_authenticate(
             # A courier trying to log in as a customer, etc. — reject
             from app.core.exceptions import InsufficientRoleError
             raise InsufficientRoleError(role)
+        if not user.is_active:
+            raise AccountDisabledError()
 
     # Update last login
     user.last_login = datetime.now(timezone.utc)
@@ -103,22 +108,38 @@ async def verify_and_authenticate(
 # ── Refresh access token ──────────────────────────────────────────────────────
 async def refresh_access_token(
     refresh_token: str,
+    db: AsyncSession,
     redis: aioredis.Redis,
 ) -> dict:
-    """Validate refresh token and issue a new access token."""
+    """
+    Rotate a refresh token: the old one is single-use and a new pair is issued.
+    Replaying an already-used refresh token revokes the whole session.
+    """
     payload = await decode_token(refresh_token, redis, expected_type="refresh")
-    tokens = create_token_pair(payload["sub"], payload["role"])
-    return tokens
+
+    if not await claim_refresh_token(payload, redis):
+        await revoke_all_user_tokens(payload["sub"], redis)
+        raise RevokedTokenError()
+
+    user: User | None = await db.get(User, payload["sub"])
+    if user is None:
+        raise InvalidTokenError()
+    if not user.is_active:
+        raise AccountDisabledError()
+
+    # Role comes from the database, not the old token
+    return create_token_pair(str(user.id), user.role.value)
 
 
 # ── Logout ────────────────────────────────────────────────────────────────────
 async def logout(
-    access_token: str,
+    access_token: str | None,
     refresh_token: str | None,
     redis: aioredis.Redis,
 ) -> None:
-    """Revoke both tokens."""
-    await revoke_token(access_token, redis)
+    """Revoke whichever tokens were supplied."""
+    if access_token:
+        await revoke_token(access_token, redis)
     if refresh_token:
         await revoke_token(refresh_token, redis)
     logger.info("User logged out")
@@ -172,6 +193,8 @@ async def verify_google_and_authenticate(
         if user.role.value != role:
             from app.core.exceptions import InsufficientRoleError
             raise InsufficientRoleError(role)
+        if not user.is_active:
+            raise AccountDisabledError()
 
     user.last_login = datetime.now(timezone.utc)
     await db.flush()

@@ -8,6 +8,7 @@ Run with:
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from httpx import AsyncClient, ASGITransport
+from uuid import uuid4
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -38,6 +39,17 @@ def mock_redis():
     async def ttl(key):
         return 3600
 
+    async def set_(key, value, nx=False, ex=None):
+        if nx and key in store:
+            return None
+        store[key] = value
+        return True
+
+    async def getdel(key):
+        return store.pop(key, None)
+
+    redis.set = set_
+    redis.getdel = getdel
     redis.get = get
     redis.setex = setex
     redis.delete = delete
@@ -268,5 +280,155 @@ class TestAuthEndpoints:
         c, _ = client
         resp = await c.get("/auth/me")
         assert resp.status_code == 403   # HTTPBearer returns 403 when no token
+
+
+# ── Refresh-token rotation and disabled accounts ─────────────────────────────
+def _user(role="customer", is_active=True):
+    from app.models.user import UserRole
+    return MagicMock(id=uuid4(), role=UserRole(role), is_active=is_active)
+
+
+def _db_with_user(user):
+    db = MagicMock()
+    db.get = AsyncMock(return_value=user)
+    return db
+
+
+def _db_returning(value):
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+    db.flush = AsyncMock()
+    return db
+
+
+def _bearer(user_id: str, role: str = "customer"):
+    from fastapi.security import HTTPAuthorizationCredentials
+    from app.auth.jwt import create_access_token
+    return HTTPAuthorizationCredentials(
+        scheme="Bearer", credentials=create_access_token(user_id, role),
+    )
+
+
+class TestRefreshRotation:
+    async def test_refresh_returns_new_pair(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.jwt import create_refresh_token
+        from app.auth.service import refresh_access_token
+        user = _user()
+        old = create_refresh_token(str(user.id), "customer")
+        tokens = await refresh_access_token(old, _db_with_user(user), redis)
+        assert tokens["refresh_token"] != old
+        assert tokens["access_token"]
+
+    async def test_refresh_token_is_single_use(self, mock_redis):
+        # Regression: one refresh token could mint new pairs for 30 days
+        redis, _ = mock_redis
+        from app.auth.jwt import create_refresh_token
+        from app.auth.service import refresh_access_token
+        from app.core.exceptions import RevokedTokenError
+        user = _user()
+        db = _db_with_user(user)
+        old = create_refresh_token(str(user.id), "customer")
+        await refresh_access_token(old, db, redis)
+        with pytest.raises(RevokedTokenError):
+            await refresh_access_token(old, db, redis)
+
+    async def test_reuse_revokes_whole_session(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.jwt import create_refresh_token, decode_token
+        from app.auth.service import refresh_access_token
+        from app.core.exceptions import RevokedTokenError
+        user = _user()
+        db = _db_with_user(user)
+        old = create_refresh_token(str(user.id), "customer")
+        new = await refresh_access_token(old, db, redis)
+        with pytest.raises(RevokedTokenError):
+            await refresh_access_token(old, db, redis)   # Replay detected
+        # The pair issued by the first refresh is dead too
+        with pytest.raises(RevokedTokenError):
+            await decode_token(new["access_token"], redis, "access")
+        with pytest.raises(RevokedTokenError):
+            await refresh_access_token(new["refresh_token"], db, redis)
+
+    async def test_role_comes_from_database(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.jwt import create_refresh_token, decode_token
+        from app.auth.service import refresh_access_token
+        user = _user(role="merchant")
+        old = create_refresh_token(str(user.id), "customer")
+        tokens = await refresh_access_token(old, _db_with_user(user), redis)
+        payload = await decode_token(tokens["access_token"], redis, "access")
+        assert payload["role"] == "merchant"
+
+    async def test_refresh_blocked_for_disabled_user(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.jwt import create_refresh_token
+        from app.auth.service import refresh_access_token
+        from app.core.exceptions import AccountDisabledError
+        user = _user(is_active=False)
+        old = create_refresh_token(str(user.id), "customer")
+        with pytest.raises(AccountDisabledError):
+            await refresh_access_token(old, _db_with_user(user), redis)
+
+    async def test_refresh_rejected_for_deleted_user(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.jwt import create_refresh_token
+        from app.auth.service import refresh_access_token
+        from app.core.exceptions import InvalidTokenError
+        old = create_refresh_token(str(uuid4()), "customer")
+        with pytest.raises(InvalidTokenError):
+            await refresh_access_token(old, _db_with_user(None), redis)
+
+
+class TestDisabledAccounts:
+    async def test_otp_login_blocked_for_disabled_user(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.service import verify_and_authenticate
+        from app.core.exceptions import AccountDisabledError
+        db = _db_returning(_user(is_active=False))
+        with patch("app.auth.service.verify_otp", new_callable=AsyncMock):
+            with pytest.raises(AccountDisabledError):
+                await verify_and_authenticate("+254712345678", "123456", "customer", db, redis)
+
+    async def test_protected_route_blocked_for_disabled_user(self, mock_redis):
+        # Regression: guards only checked the JWT, never users.is_active
+        redis, _ = mock_redis
+        from app.auth.guards import get_current_user
+        from app.core.exceptions import AccountDisabledError
+        with pytest.raises(AccountDisabledError):
+            await get_current_user(_bearer(str(uuid4())), redis, _db_returning(False))
+
+    async def test_protected_route_rejects_deleted_user(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.guards import get_current_user
+        from app.core.exceptions import InvalidTokenError
+        with pytest.raises(InvalidTokenError):
+            await get_current_user(_bearer(str(uuid4())), redis, _db_returning(None))
+
+    async def test_active_user_passes_guard(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.guards import get_current_user
+        uid = str(uuid4())
+        user = await get_current_user(_bearer(uid), redis, _db_returning(True))
+        assert user["sub"] == uid
+
+
+class TestLogout:
+    async def test_logout_with_only_refresh_token(self, client):
+        # Regression: logout needed a valid access token, so once it expired
+        # the app could never revoke its refresh token
+        c, store = client
+        from app.auth.jwt import create_refresh_token
+        refresh = create_refresh_token(str(uuid4()), "customer")
+        resp = await c.post("/auth/logout", json={"refresh_token": refresh})
+        assert resp.status_code == 200
+        assert any(k.startswith("revoked_token:") for k in store)
+
+    async def test_logout_without_any_token(self, client):
+        c, _ = client
+        resp = await c.post("/auth/logout")
+        assert resp.status_code == 401
 
 

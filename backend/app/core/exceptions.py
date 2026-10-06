@@ -36,6 +36,10 @@ class InsufficientRoleError(SokoFetchException):
         roles = required if isinstance(required, str) else " or ".join(required)
         super().__init__(403, "INSUFFICIENT_ROLE", f"Access denied. Requires role: {roles}.")
 
+class AccountDisabledError(SokoFetchException):
+    def __init__(self):
+        super().__init__(403, "ACCOUNT_DISABLED", "This account has been disabled. Contact support.")
+
 class ObjectAccessDeniedError(SokoFetchException):
     def __init__(self):
         super().__init__(403, "ACCESS_DENIED", "You do not have access to this resource.")

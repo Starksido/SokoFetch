@@ -72,7 +72,35 @@ async def decode_token(
     if jti and await redis.get(f"revoked_token:{jti}"):
         raise RevokedTokenError()
 
+    # Tokens issued at or before a session-wide revocation are dead
+    cutoff = await redis.get(_valid_after_key(payload.get("sub", "")))
+    if cutoff and int(payload.get("iat", 0)) <= int(cutoff):
+        raise RevokedTokenError()
+
     return payload
+
+
+def _valid_after_key(user_id: str) -> str:
+    return f"tokens_valid_after:{user_id}"
+
+
+async def revoke_all_user_tokens(user_id: str, redis: aioredis.Redis) -> None:
+    """Invalidate every token issued to this user up to now."""
+    now = int(datetime.now(timezone.utc).timestamp())
+    ttl = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 3600
+    await redis.setex(_valid_after_key(user_id), ttl, str(now))
+    logger.warning("All tokens revoked | user=%s", user_id)
+
+
+async def claim_refresh_token(payload: dict, redis: aioredis.Redis) -> bool:
+    """
+    Mark a refresh token as used. Returns False if it was already used,
+    which means the token was replayed (stolen or duplicated).
+    """
+    remaining = int(payload["exp"]) - int(datetime.now(timezone.utc).timestamp())
+    return bool(await redis.set(
+        f"used_refresh:{payload['jti']}", "1", nx=True, ex=max(remaining, 1),
+    ))
 
 
 # ── Token revocation ──────────────────────────────────────────────────────────

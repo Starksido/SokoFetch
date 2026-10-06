@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
 from app.core.database import get_db
 from app.core.redis import get_redis
+from app.core.exceptions import InvalidTokenError
 from app.auth import service
 from app.auth.guards import get_current_user
 from app.schemas.auth import (
@@ -18,6 +20,8 @@ from app.schemas.auth import (
 )
 
 router = APIRouter()
+
+_optional_bearer = HTTPBearer(auto_error=False)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -100,14 +104,20 @@ async def google_login(
     "/token/refresh",
     response_model=dict,
     summary="Refresh access token",
-    description="Exchange a valid refresh token for a new access token.",
+    description=(
+        "Exchange a refresh token for a new token pair. Refresh tokens are "
+        "single-use: store the new refresh_token from the response. Reusing "
+        "an old one logs the user out everywhere."
+    ),
 )
 async def refresh_token(
     body: TokenRefreshSchema,
+    db:    AsyncSession   = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
 ):
     return await service.refresh_access_token(
         refresh_token=body.refresh_token,
+        db=db,
         redis=redis,
     )
 
@@ -119,19 +129,21 @@ async def refresh_token(
     "/logout",
     response_model=LogoutResponse,
     summary="Log out",
-    description="Revoke the current access token (and optionally the refresh token).",
+    description=(
+        "Revoke the access token in the Authorization header and/or the refresh "
+        "token in the body. Works even after the access token has expired, so "
+        "the app can always end the session."
+    ),
 )
 async def logout(
-    request: Request,
-    body:    TokenRefreshSchema | None = None,
-    user:    dict                      = Depends(get_current_user),
-    redis:   aioredis.Redis            = Depends(get_redis),
+    body:        TokenRefreshSchema | None           = None,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
+    redis:       aioredis.Redis                      = Depends(get_redis),
 ):
-    # Extract raw access token from Authorization header
-    auth_header = request.headers.get("Authorization", "")
-    access_token = auth_header.replace("Bearer ", "").strip()
-
+    access_token  = credentials.credentials if credentials else None
     refresh_token = body.refresh_token if body else None
+    if not access_token and not refresh_token:
+        raise InvalidTokenError()
 
     await service.logout(
         access_token=access_token,
