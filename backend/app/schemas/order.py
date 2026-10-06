@@ -55,6 +55,21 @@ class DeliveryCodeResponse(BaseModel):
     delivery_code: str
 
 
+class OrderTrackingResponse(BaseModel):
+    """Polled by the customer app while an order is on its way."""
+    order_id:              str
+    status:                str
+    courier_assigned:      bool
+    courier_name:          Optional[str] = None     # First name only
+    vehicle_type:          Optional[str] = None
+    latitude:              Optional[float] = None   # Only while the delivery is live
+    longitude:             Optional[float] = None
+    location_updated_at:   Optional[str] = None
+    estimated_delivery_at: Optional[datetime] = None
+    picked_up_at:          Optional[datetime] = None
+    delivered_at:          Optional[datetime] = None
+
+
 # ── Rating ────────────────────────────────────────────────────────────────────
 class OrderRatingRequest(BaseModel):
     courier_rating:  Optional[int] = Field(None, ge=1, le=5)

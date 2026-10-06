@@ -11,6 +11,7 @@ from app.schemas.order import (
     OrderStatusUpdate,
     OrderRatingRequest,
     DeliveryCodeResponse,
+    OrderTrackingResponse,
     OrderDetail,
     OrderSummary,
 )
@@ -140,6 +141,29 @@ async def cancel_order(
         db=db,
         redis=redis,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /orders/{order_id}/tracking
+# Polled by the app for live tracking (there is no WebSocket)
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get(
+    "/{order_id}/tracking",
+    response_model=OrderTrackingResponse,
+    summary="Track an order",
+    description=(
+        "Order status plus the assigned courier's first name, vehicle and last "
+        "known position. The position is only included while the delivery is "
+        "in progress. Poll every ~10 seconds."
+    ),
+)
+async def get_tracking(
+    order_id: str,
+    user:     dict           = Depends(get_current_user),
+    db:       AsyncSession   = Depends(get_db),
+    redis:    aioredis.Redis = Depends(get_redis),
+):
+    return await service.get_tracking(order_id=order_id, user=user, db=db, redis=redis)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

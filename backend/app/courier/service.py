@@ -12,6 +12,7 @@ import logging
 import secrets
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
+from uuid import UUID
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -208,6 +209,16 @@ async def set_online_status(
 
 
 # ── Location update ───────────────────────────────────────────────────────────
+async def _is_assigned_order(order_id: str, courier: Courier, db: AsyncSession) -> bool:
+    try:
+        UUID(order_id)
+    except ValueError:
+        return False
+    order = await OrderRepo(db).get(order_id)
+    return order is not None and order.courier_id is not None \
+        and str(order.courier_id) == str(courier.id)
+
+
 async def update_location(
     user_id: str,
     latitude: Decimal,
@@ -237,8 +248,9 @@ async def update_location(
     })
     await redis.setex(location_key, 300, location_data)
 
-    # If courier has an active order, publish to order tracking channel
-    if order_id:
+    # If courier has an active order, publish to order tracking channel —
+    # only for an order actually assigned to this courier
+    if order_id and await _is_assigned_order(order_id, courier, db):
         tracking_channel = f"tracking:order:{order_id}"
         eta_minutes      = 15  # TODO: calculate from Google Maps Directions API
         tracking_payload = json.dumps({

@@ -124,3 +124,38 @@ class TestPublicMerchantMenu:
         with patch("app.merchant.service.MerchantRepo", return_value=_repo(get_or_404=merchant)), \
              pytest.raises(NotFoundError):
             await service.get_merchant_menu(str(merchant.id), MagicMock())
+
+
+# ── Courier location only feeds the courier's own order ──────────────────────
+class TestCourierLocationPublish:
+    async def _update(self, order_id, order):
+        from app.courier import service
+        courier = MagicMock(id=uuid4(), is_online=True)
+        if order is not None and order.courier_id == "mine":
+            order.courier_id = courier.id
+        redis = MagicMock()
+        redis.setex = AsyncMock()
+        redis.publish = AsyncMock()
+        with patch("app.courier.service.CourierRepo",
+                   return_value=_repo(get_by_or_404=courier, update=courier)), \
+             patch("app.courier.service.OrderRepo", return_value=_repo(get=order)):
+            await service.update_location("u", Decimal("-1.28"), Decimal("36.82"),
+                                          order_id, MagicMock(), redis)
+        return redis
+
+    async def test_publishes_for_assigned_order(self):
+        order = MagicMock(courier_id="mine")
+        redis = await self._update(str(uuid4()), order)
+        redis.publish.assert_awaited_once()
+
+    async def test_ignores_someone_elses_order(self):
+        # Regression: any order_id was accepted, so a courier could feed a
+        # fake position into another order's tracking channel
+        order = MagicMock(courier_id=uuid4())
+        redis = await self._update(str(uuid4()), order)
+        redis.publish.assert_not_awaited()
+        redis.setex.assert_awaited_once()   # Own location is still stored
+
+    async def test_ignores_malformed_order_id(self):
+        redis = await self._update("not-a-uuid", None)
+        redis.publish.assert_not_awaited()

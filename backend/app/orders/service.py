@@ -4,6 +4,7 @@ Orders Service
 All order business logic lives here.
 Routers call service functions; service functions use repositories and models.
 """
+import json
 import logging
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -398,6 +399,65 @@ async def submit_proof_of_delivery(
 
     log.info("Proof submitted | order=%s | photo=%s", order_id, bool(photo_url))
     return order
+
+
+# ── Live tracking (polled) ────────────────────────────────────────────────────
+# The courier's position is only shared while the delivery is in progress
+_LIVE_TRACKING_STATUSES = {
+    OrderStatus.confirmed,
+    OrderStatus.preparing,
+    OrderStatus.ready_for_pickup,
+    OrderStatus.picked_up,
+    OrderStatus.in_transit,
+}
+
+
+async def get_tracking(
+    order_id: str,
+    user: dict,
+    db: AsyncSession,
+    redis: aioredis.Redis,
+) -> dict:
+    """Order status plus the assigned courier's last known position."""
+    order = await get_order(order_id, user, db)
+    tracking = {
+        "order_id":              str(order.id),
+        "status":                order.status.value,
+        "courier_assigned":      order.courier_id is not None,
+        "estimated_delivery_at": order.estimated_delivery_at,
+        "picked_up_at":          order.picked_up_at,
+        "delivered_at":          order.delivered_at,
+    }
+    if order.courier_id is None:
+        return tracking
+
+    courier = await CourierRepo(db).get(str(order.courier_id))
+    if courier is None:
+        return tracking
+
+    if courier.full_name:
+        tracking["courier_name"] = courier.full_name.split()[0]
+    if courier.vehicle_type is not None:
+        tracking["vehicle_type"] = courier.vehicle_type.value
+
+    if order.status not in _LIVE_TRACKING_STATUSES:
+        return tracking
+
+    cached = await redis.get(f"location:courier:{courier.id}")
+    if cached:
+        loc = json.loads(cached)
+        tracking.update(
+            latitude=loc["latitude"],
+            longitude=loc["longitude"],
+            location_updated_at=loc.get("updated_at"),
+        )
+    elif courier.last_latitude is not None and courier.last_longitude is not None:
+        tracking.update(
+            latitude=float(courier.last_latitude),
+            longitude=float(courier.last_longitude),
+            location_updated_at=courier.last_seen_at.isoformat() if courier.last_seen_at else None,
+        )
+    return tracking
 
 
 # ── Delivery code (customer) ──────────────────────────────────────────────────

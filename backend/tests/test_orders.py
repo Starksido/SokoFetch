@@ -597,3 +597,77 @@ class TestCustomerDeliveryCode:
         _, order_repo = await self._get(order)
         code = order_repo.update.await_args.kwargs["delivery_code"]
         assert len(code) == 4 and code.isdigit()
+
+
+# ── Live tracking (polled; replaces the WebSocket the app used to expect) ────
+class TestOrderTracking:
+    def _courier(self, **kw):
+        from app.models.courier import VehicleType
+        c = MagicMock(id=uuid4(), full_name="Juma Otieno", vehicle_type=VehicleType.motorcycle)
+        c.last_latitude  = kw.get("last_latitude")
+        c.last_longitude = kw.get("last_longitude")
+        c.last_seen_at   = kw.get("last_seen_at")
+        return c
+
+    async def _track(self, order, courier=None, redis_location=None):
+        import json
+        from app.orders import service
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=json.dumps(redis_location) if redis_location else None)
+        with patch("app.orders.service.get_order", new=AsyncMock(return_value=order)), \
+             patch("app.orders.service.CourierRepo", return_value=_flow_repo(get=courier)):
+            return await service.get_tracking(str(order.id), {"sub": "u", "role": "customer"},
+                                              MagicMock(), redis)
+
+    async def test_no_courier_yet(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        order = _flow_order(OrderStatus.preparing, PaymentStatus.paid)
+        result = await self._track(order)
+        assert result["courier_assigned"] is False
+        assert "latitude" not in result
+
+    async def test_live_location_from_redis(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        courier = self._courier()
+        order = _flow_order(OrderStatus.in_transit, PaymentStatus.paid, courier_id=courier.id)
+        result = await self._track(order, courier, {
+            "latitude": -1.28, "longitude": 36.82, "updated_at": "2026-10-06T10:00:00+00:00",
+        })
+        assert result["courier_assigned"] is True
+        assert result["courier_name"] == "Juma"            # First name only
+        assert result["vehicle_type"] == "motorcycle"
+        assert (result["latitude"], result["longitude"]) == (-1.28, 36.82)
+
+    async def test_falls_back_to_last_saved_location(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        seen = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+        courier = self._courier(last_latitude=Decimal("-1.30"), last_longitude=Decimal("36.80"),
+                                last_seen_at=seen)
+        order = _flow_order(OrderStatus.picked_up, PaymentStatus.paid, courier_id=courier.id)
+        result = await self._track(order, courier)
+        assert (result["latitude"], result["longitude"]) == (-1.30, 36.80)
+        assert result["location_updated_at"] == seen.isoformat()
+
+    async def test_location_hidden_after_delivery(self):
+        from app.models.order import OrderStatus, PaymentStatus
+        courier = self._courier()
+        order = _flow_order(OrderStatus.delivered, PaymentStatus.paid, courier_id=courier.id)
+        result = await self._track(order, courier, {"latitude": -1.28, "longitude": 36.82})
+        assert result["courier_name"] == "Juma"
+        assert "latitude" not in result
+
+    async def test_other_customers_cannot_track(self):
+        from app.orders import service
+        from app.models.order import OrderStatus, PaymentStatus
+        from app.core.exceptions import ObjectAccessDeniedError
+        order = _flow_order(OrderStatus.in_transit, PaymentStatus.paid)
+        order.customer_id = uuid4()
+        with patch("app.orders.service.OrderRepo", return_value=_flow_repo(get_or_404=order)), \
+             patch("app.orders.service.get_caller_profile_id", new=AsyncMock(return_value=str(uuid4()))), \
+             pytest.raises(ObjectAccessDeniedError):
+            await service.get_tracking(str(order.id), {"sub": "u", "role": "customer"},
+                                       MagicMock(), MagicMock())
+
+    def test_tracking_route_registered(self):
+        from app.main import app
+        assert "/orders/{order_id}/tracking" in app.openapi()["paths"]
