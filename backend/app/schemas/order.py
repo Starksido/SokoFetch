@@ -150,3 +150,11 @@ class CourierLocationResponse(BaseModel):
     longitude:    Decimal
     eta_minutes:  Optional[int]
     updated_at:   str
+
+
+class CourierActiveOrder(OrderDetail):
+    """The courier's current order plus where to pick it up."""
+    merchant_name:    Optional[str] = None
+    merchant_address: Optional[str] = None
+    merchant_lat:     Optional[Decimal] = None
+    merchant_lon:     Optional[Decimal] = None

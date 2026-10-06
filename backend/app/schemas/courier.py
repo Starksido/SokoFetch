@@ -69,3 +69,17 @@ class DocumentUploadResponse(BaseModel):
     doc_type:   str
     message:    str
     status:     str
+
+class CourierJob(BaseModel):
+    """An unassigned, paid order a courier can accept."""
+    order_id:             str
+    status:               str
+    merchant_name:        str
+    merchant_address:     str
+    merchant_latitude:    Optional[Decimal]
+    merchant_longitude:   Optional[Decimal]
+    item_count:           int
+    courier_payout:       Optional[Decimal]
+    pickup_distance_km:   Optional[float]   # Courier → shop
+    delivery_distance_km: Optional[float]   # Shop → customer
+    created_at:           datetime

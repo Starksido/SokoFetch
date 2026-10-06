@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 import redis.asyncio as aioredis
 
 from app.models.order import Order, OrderStatus, PaymentMethod, PaymentStatus, VALID_TRANSITIONS
@@ -315,43 +315,47 @@ async def update_order_status(
 
 
 # ── Assign courier ────────────────────────────────────────────────────────────
+# Paid orders a courier can take on: the rider can head to the shop while it
+# is still preparing. Pick-up itself still requires ready_for_pickup.
+ASSIGNABLE_STATUSES = (
+    OrderStatus.confirmed,
+    OrderStatus.preparing,
+    OrderStatus.ready_for_pickup,
+)
+
+
 async def assign_courier(
     order_id: str,
     courier_id: str,
     db: AsyncSession,
-    redis: aioredis.Redis,
 ) -> Order:
     """
-    Assign a courier to a READY_FOR_PICKUP order.
-    Called by the dispatch engine — not directly by users.
+    Give an unassigned, paid order to a courier (the courier accepted the job).
+    A single conditional UPDATE does the claim, so when two couriers accept
+    the same job at once exactly one wins; the other gets 409 JOB_TAKEN.
     """
-    order_repo  = OrderRepo(db)
-    courier_repo = CourierRepo(db)
-
-    order   = await order_repo.get_or_404(order_id, "Order")
-    courier = await courier_repo.get_or_404(courier_id, "Courier")
-
+    courier = await CourierRepo(db).get_or_404(courier_id, "Courier")
     if not courier.is_dispatchable:
         raise CourierNotApprovedError()
 
-    if order.status != OrderStatus.ready_for_pickup:
-        raise SokoFetchException(422, "ORDER_NOT_READY", "Order is not ready for courier assignment.")
-
-    order = await order_repo.update(order, courier_id=str(courier.id))
-
-    # Notify courier
-    user_repo = UserRepo(db)
-    courier_user = await user_repo.get(str(courier.user_id))
-    merchant = await MerchantRepo(db).get(str(order.merchant_id))
-
-    if courier_user and courier_user.fcm_token:
-        await notifications.notify_courier_dispatch(
-            courier_user.fcm_token,
-            order_id=order_id,
-            merchant_name=merchant.shop_name if merchant else "Merchant",
-            earnings=str(order.courier_payout or "0"),
+    claimed = (await db.execute(
+        update(Order)
+        .where(
+            Order.id == order_id,
+            Order.courier_id.is_(None),
+            Order.status.in_(ASSIGNABLE_STATUSES),
+            Order.payment_status == PaymentStatus.paid,
         )
+        .values(courier_id=courier.id, updated_at=datetime.now(timezone.utc))
+        .returning(Order.id)
+        .execution_options(synchronize_session=False)
+    )).scalar_one_or_none()
 
+    if claimed is None:
+        raise SokoFetchException(409, "JOB_TAKEN", "This job is no longer available.")
+
+    order = await OrderRepo(db).get_or_404(order_id, "Order")
+    await db.refresh(order)   # Identity map may still hold the pre-UPDATE row
     log.info("Courier assigned | order=%s | courier=%s", order_id, courier_id)
     return order
 

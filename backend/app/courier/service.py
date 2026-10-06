@@ -25,9 +25,13 @@ from app.models.courier import (
     Courier, CourierDocument, CourierStatus,
     DocumentType, REQUIRED_DOCUMENTS, VehicleType,
 )
-from app.models.order import Order, OrderStatus
-from app.core.repository import CourierRepo, OrderRepo
-from app.core.exceptions import SokoFetchException, ObjectAccessDeniedError
+from app.models.merchant import Merchant
+from app.models.order import Order, OrderStatus, PaymentStatus
+from app.core.repository import CourierRepo, MerchantRepo, OrderRepo
+from app.core.exceptions import SokoFetchException, ObjectAccessDeniedError, CourierNotApprovedError
+from app.orders.pricing import _haversine_km
+from app.orders.service import ASSIGNABLE_STATUSES, assign_courier
+from app.schemas.order import OrderDetail
 from app.core.config import settings
 from app.core.encryption import encrypt_document
 
@@ -272,27 +276,140 @@ async def update_location(
 
 
 # ── Get active order ──────────────────────────────────────────────────────────
-async def get_active_order(user_id: str, db: AsyncSession) -> Order | None:
-    """Returns the courier's current in-flight order (if any)."""
-    repo    = CourierRepo(db)
-    courier = await repo.get_by_or_404("Courier", user_id=user_id)
+# A courier can accept a job while the shop is still preparing it
+ACTIVE_ORDER_STATUSES = (
+    OrderStatus.confirmed,
+    OrderStatus.preparing,
+    OrderStatus.ready_for_pickup,
+    OrderStatus.picked_up,
+    OrderStatus.in_transit,
+)
 
-    active_statuses = [
-        OrderStatus.ready_for_pickup.value,
-        OrderStatus.picked_up.value,
-        OrderStatus.in_transit.value,
-    ]
-    stmt = (
+
+def _active_order_stmt(courier: Courier):
+    return (
         select(Order)
         .where(
-            Order.courier_id == str(courier.id),
-            Order.status.in_(active_statuses),
+            Order.courier_id == courier.id,
+            Order.status.in_(ACTIVE_ORDER_STATUSES),
         )
         .order_by(Order.updated_at.desc())
         .limit(1)
     )
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+
+
+async def get_active_order(user_id: str, db: AsyncSession) -> dict | None:
+    """
+    The courier's current order (if any), with the shop's name, address and
+    position so the rider knows where to pick it up.
+    """
+    repo    = CourierRepo(db)
+    courier = await repo.get_by_or_404("Courier", user_id=user_id)
+
+    order = (await db.execute(_active_order_stmt(courier))).scalar_one_or_none()
+    if order is None:
+        return None
+
+    merchant = await MerchantRepo(db).get(str(order.merchant_id))
+    active = OrderDetail.model_validate(order).model_dump()
+    if merchant is not None:
+        active.update(
+            merchant_name    = merchant.shop_name,
+            merchant_address = merchant.address,
+            merchant_lat     = merchant.latitude,
+            merchant_lon     = merchant.longitude,
+        )
+    return active
+
+
+# ── Job board: couriers pick up unassigned orders ─────────────────────────────
+JOB_LIST_LIMIT = 20
+
+
+async def _dispatchable_courier(user_id: str, db: AsyncSession) -> Courier:
+    courier = await CourierRepo(db).get_by_or_404("Courier", user_id=user_id)
+    if courier.status != CourierStatus.active or courier.documents_verified_at is None:
+        raise CourierNotApprovedError()
+    if not courier.is_online:
+        raise SokoFetchException(422, "OFFLINE", "Go online to see and accept jobs.")
+    return courier
+
+
+async def _has_active_order(courier: Courier, db: AsyncSession) -> bool:
+    return (await db.execute(_active_order_stmt(courier))).scalar_one_or_none() is not None
+
+
+def _km(lat1, lon1, lat2, lon2) -> float | None:
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    return round(_haversine_km(float(lat1), float(lon1), float(lat2), float(lon2)), 1)
+
+
+async def list_jobs(user_id: str, db: AsyncSession) -> list[dict]:
+    """
+    Paid orders nobody has taken yet, nearest shop first. Empty while the
+    courier is already on a delivery. The customer's exact address is only
+    shown after accepting; before that the rider sees the trip distance.
+    """
+    courier = await _dispatchable_courier(user_id, db)
+    if await _has_active_order(courier, db):
+        return []
+
+    rows = (await db.execute(
+        select(Order, Merchant)
+        .join(Merchant, Order.merchant_id == Merchant.id)
+        .where(
+            Order.courier_id.is_(None),
+            Order.status.in_(ASSIGNABLE_STATUSES),
+            Order.payment_status == PaymentStatus.paid,
+        )
+        .order_by(Order.created_at)
+        .limit(100)
+    )).all()
+
+    jobs = []
+    for order, merchant in rows:
+        jobs.append({
+            "order_id":             str(order.id),
+            "status":               order.status.value,
+            "merchant_name":        merchant.shop_name,
+            "merchant_address":     merchant.address,
+            "merchant_latitude":    merchant.latitude,
+            "merchant_longitude":   merchant.longitude,
+            "item_count":           order.item_count,
+            "courier_payout":       order.courier_payout,
+            "pickup_distance_km":   _km(courier.last_latitude, courier.last_longitude,
+                                        merchant.latitude, merchant.longitude),
+            "delivery_distance_km": _km(merchant.latitude, merchant.longitude,
+                                        order.delivery_latitude, order.delivery_longitude),
+            "created_at":           order.created_at,
+        })
+    # Nearest first; jobs with an unknown distance go last, oldest first
+    jobs.sort(key=lambda j: (j["pickup_distance_km"] is None, j["pickup_distance_km"] or 0))
+    return jobs[:JOB_LIST_LIMIT]
+
+
+async def accept_job(
+    user_id: str,
+    order_id: str,
+    db: AsyncSession,
+    redis: aioredis.Redis,
+) -> dict:
+    """Claim a job. One active delivery per courier."""
+    courier = await _dispatchable_courier(user_id, db)
+
+    # Serialise this courier's accepts so a double tap cannot claim two jobs
+    lock_key = f"courier_accept_lock:{courier.id}"
+    if not await redis.set(lock_key, "1", nx=True, ex=10):
+        raise SokoFetchException(409, "ACCEPT_IN_PROGRESS", "Already accepting a job. Please wait.")
+    try:
+        if await _has_active_order(courier, db):
+            raise SokoFetchException(409, "ALREADY_ON_A_JOB", "Finish your current delivery first.")
+        await assign_courier(order_id, str(courier.id), db)
+    finally:
+        await redis.delete(lock_key)
+
+    return await get_active_order(user_id, db)
 
 
 # ── Earnings history ──────────────────────────────────────────────────────────

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
@@ -7,13 +9,14 @@ from app.core.redis import get_redis
 from app.auth.guards import require_role
 from app.courier import service
 from app.schemas.courier import (
+    CourierJob,
     CourierProfileResponse,
     CourierProfileUpdate,
     CourierLocationUpdate,
     DocumentUploadResponse,
     CourierEarningsDay,
 )
-from app.schemas.order import OrderDetail
+from app.schemas.order import CourierActiveOrder
 from app.schemas.common import MessageResponse
 from app.schemas.courier import CourierOnboardRequest
 
@@ -154,15 +157,60 @@ async def update_location(
 # ─────────────────────────────────────────────────────────────────────────────
 @router.get(
     "/order/active",
-    response_model=OrderDetail | None,
+    response_model=CourierActiveOrder | None,
     summary="Get my active delivery",
-    description="Returns the courier's current in-flight order, or null if none.",
+    description=(
+        "Returns the courier's current order, or null if none, with the shop's "
+        "name, address and position for pick-up. Includes orders accepted while "
+        "the shop is still preparing them."
+    ),
 )
 async def get_active_order(
     user: dict        = Depends(require_role("courier")),
     db:   AsyncSession = Depends(get_db),
 ):
     return await service.get_active_order(user_id=user["sub"], db=db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /courier/jobs
+# ─────────────────────────────────────────────────────────────────────────────
+@router.get(
+    "/jobs",
+    response_model=list[CourierJob],
+    summary="Available jobs",
+    description=(
+        "Paid orders no courier has taken yet, nearest shop first (max 20). "
+        "Only for approved couriers who are online; empty while the courier "
+        "already has an active delivery. Poll every ~15 seconds."
+    ),
+)
+async def list_jobs(
+    user: dict         = Depends(require_role("courier")),
+    db:   AsyncSession = Depends(get_db),
+):
+    return await service.list_jobs(user_id=user["sub"], db=db)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /courier/jobs/{order_id}/accept
+# ─────────────────────────────────────────────────────────────────────────────
+@router.post(
+    "/jobs/{order_id}/accept",
+    response_model=CourierActiveOrder,
+    summary="Accept a job",
+    description=(
+        "Claim an available job. If another courier got there first the "
+        "response is 409 JOB_TAKEN. A courier can only have one active delivery."
+    ),
+)
+async def accept_job(
+    order_id: UUID,
+    user:  dict           = Depends(require_role("courier")),
+    db:    AsyncSession   = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    return await service.accept_job(user_id=user["sub"], order_id=str(order_id), db=db, redis=redis)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
