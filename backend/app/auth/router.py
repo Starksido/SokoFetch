@@ -17,6 +17,8 @@ from app.schemas.auth import (
     LogoutResponse,
     GoogleLoginSchema,
     GoogleTokenResponse,
+    SignupSchema,
+    SignupRequiredResponse,
 )
 
 router = APIRouter()
@@ -43,7 +45,6 @@ async def request_otp(
 ):
     result = await service.request_otp(
         phone=body.phone,
-        role=body.role,
         db=db,
         redis=redis,
     )
@@ -55,11 +56,14 @@ async def request_otp(
 # ─────────────────────────────────────────────────────────────────────────────
 @router.post(
     "/otp/verify",
-    response_model=TokenResponse,
+    response_model=TokenResponse | SignupRequiredResponse,
     summary="Verify OTP and authenticate",
     description=(
-        "Verify the 6-digit OTP. Creates a new user account if first login. "
-        "Returns a JWT access token (30 min) and refresh token (30 days)."
+        "Verify the 6-digit OTP. An existing account is logged in with its own "
+        "role and gets a JWT access token (30 min) and refresh token (30 days). "
+        "For a new number: with `role` the account is created straight away; "
+        "without it the response is `{needs_role: true, signup_token}` and the "
+        "account is created by POST /auth/signup once the user picks a role."
     ),
 )
 async def verify_otp(
@@ -80,21 +84,51 @@ async def verify_otp(
 # ──────────────────────────────────────────────────────────────
 @router.post(
     "/google-login",
-    response_model=GoogleTokenResponse,
+    response_model=GoogleTokenResponse | SignupRequiredResponse,
     summary="Sign in with Google",
     description=(
-        "Verify a Google ID token. Creates a new user account if first login. "
-        "Returns a JWT access token (30 min) and refresh token (30 days)."
+        "Verify a Google ID token. Same rules as /auth/otp/verify: existing "
+        "accounts log in with their own role, new ones need a role here or a "
+        "role picked through POST /auth/signup."
     ),
 )
 async def google_login(
     body: GoogleLoginSchema,
-    db: AsyncSession = Depends(get_db),
+    db:    AsyncSession   = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
 ):
     return await service.verify_google_and_authenticate(
         id_token_str=body.id_token,
         role=body.role,
         db=db,
+        redis=redis,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /auth/signup
+# ─────────────────────────────────────────────────────────────────────────────
+@router.post(
+    "/signup",
+    response_model=TokenResponse,
+    status_code=201,
+    summary="Create the account with the chosen role",
+    description=(
+        "Exchange the signup_token from /auth/otp/verify or /auth/google-login "
+        "for a new account with the chosen role (customer, merchant or courier). "
+        "The token is single-use and expires after 10 minutes."
+    ),
+)
+async def signup(
+    body:  SignupSchema,
+    db:    AsyncSession   = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+):
+    return await service.complete_signup(
+        signup_token=body.signup_token,
+        role=body.role,
+        db=db,
+        redis=redis,
     )
 
 # ─────────────────────────────────────────────────────────────────────────────

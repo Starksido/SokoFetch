@@ -1,5 +1,5 @@
 from pydantic import BaseModel, field_validator
-from typing import Literal
+from typing import Literal, Optional
 import re
 
 PHONE_RE = re.compile(r"^\+254[17]\d{8}$")
@@ -9,7 +9,6 @@ ROLES = Literal["customer", "merchant", "courier"]
 # ── Request schemas ───────────────────────────────────────────────────────────
 class OTPRequestSchema(BaseModel):
     phone: str
-    role:  ROLES
 
     @field_validator("phone")
     @classmethod
@@ -25,7 +24,9 @@ class OTPRequestSchema(BaseModel):
 class OTPVerifySchema(BaseModel):
     phone:    str
     otp_code: str
-    role:     ROLES
+    # Omit to log in as whatever role the account has. A new number without
+    # a role gets a signup_token and picks the role via POST /auth/signup.
+    role:     Optional[ROLES] = None
 
     @field_validator("phone")
     @classmethod
@@ -50,6 +51,11 @@ class TokenRefreshSchema(BaseModel):
     refresh_token: str
 
 
+class SignupSchema(BaseModel):
+    signup_token: str
+    role:         ROLES   # admin can never be chosen
+
+
 # ── Response schemas ──────────────────────────────────────────────────────────
 class OTPRequestResponse(BaseModel):
     message:    str = "OTP sent successfully"
@@ -58,7 +64,8 @@ class OTPRequestResponse(BaseModel):
 
 class UserProfile(BaseModel):
     user_id:    str
-    phone:      str
+    phone:      Optional[str] = None
+    email:      Optional[str] = None
     role:       str
     is_new:     bool    # True if account was created on this OTP verify
     created_at: str
@@ -72,13 +79,22 @@ class TokenResponse(BaseModel):
     user:          UserProfile
 
 
+class SignupRequiredResponse(BaseModel):
+    """Identity verified, but no account exists yet: the user must pick a role."""
+    needs_role:   Literal[True] = True
+    signup_token: str
+    expires_in:   int = 600   # seconds
+
+
 class LogoutResponse(BaseModel):
     message: str = "Logged out successfully"
 
 
 class GoogleLoginSchema(BaseModel):
     id_token: str
-    role:     ROLES
+    role:     Optional[ROLES] = None
+
+
 class GoogleUserProfile(BaseModel):
     user_id:    str
     email:      str | None

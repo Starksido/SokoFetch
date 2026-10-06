@@ -107,18 +107,18 @@ class TestOTP:
     async def test_generate_stores_in_redis(self, mock_redis):
         redis, store = mock_redis
         from app.auth.otp import generate_otp
-        code = await generate_otp("+254712345678", "customer", redis)
+        code = await generate_otp("+254712345678", redis)
         assert len(code) == 6
         assert code.isdigit()
         # Should be stored in Redis
-        assert any("otp:customer:" in k for k in store)
+        assert any(k.startswith("otp:") for k in store)
 
     @pytest.mark.asyncio
     async def test_verify_correct_code(self, mock_redis):
         redis, store = mock_redis
         from app.auth.otp import generate_otp, verify_otp
-        code = await generate_otp("+254712345678", "customer", redis)
-        result = await verify_otp("+254712345678", code, "customer", redis)
+        code = await generate_otp("+254712345678", redis)
+        result = await verify_otp("+254712345678", code, redis)
         assert result is True
 
     @pytest.mark.asyncio
@@ -126,19 +126,19 @@ class TestOTP:
         redis, _ = mock_redis
         from app.auth.otp import generate_otp, verify_otp
         from app.core.exceptions import InvalidOTPError
-        await generate_otp("+254712345678", "customer", redis)
+        await generate_otp("+254712345678", redis)
         with pytest.raises(InvalidOTPError):
-            await verify_otp("+254712345678", "000000", "customer", redis)
+            await verify_otp("+254712345678", "000000", redis)
 
     @pytest.mark.asyncio
     async def test_otp_single_use(self, mock_redis):
         redis, _ = mock_redis
         from app.auth.otp import generate_otp, verify_otp
         from app.core.exceptions import InvalidOTPError
-        code = await generate_otp("+254712345678", "customer", redis)
-        await verify_otp("+254712345678", code, "customer", redis)  # First use — OK
+        code = await generate_otp("+254712345678", redis)
+        await verify_otp("+254712345678", code, redis)  # First use — OK
         with pytest.raises(InvalidOTPError):
-            await verify_otp("+254712345678", code, "customer", redis)  # Second use — fails
+            await verify_otp("+254712345678", code, redis)  # Second use — fails
 
     @pytest.mark.asyncio
     async def test_code_burned_after_max_wrong_attempts(self, mock_redis):
@@ -146,28 +146,28 @@ class TestOTP:
         redis, _ = mock_redis
         from app.auth.otp import generate_otp, verify_otp
         from app.core.exceptions import InvalidOTPError, RateLimitError
-        code = await generate_otp("+254712345678", "customer", redis)
+        code = await generate_otp("+254712345678", redis)
         wrong = "000000" if code != "000000" else "111111"
         for _ in range(4):
             with pytest.raises(InvalidOTPError):
-                await verify_otp("+254712345678", wrong, "customer", redis)
+                await verify_otp("+254712345678", wrong, redis)
         with pytest.raises(RateLimitError):
-            await verify_otp("+254712345678", wrong, "customer", redis)
+            await verify_otp("+254712345678", wrong, redis)
         # The real code no longer works — a new one must be requested
         with pytest.raises(InvalidOTPError):
-            await verify_otp("+254712345678", code, "customer", redis)
+            await verify_otp("+254712345678", code, redis)
 
     async def test_new_code_resets_wrong_attempts(self, mock_redis):
         redis, _ = mock_redis
         from app.auth.otp import generate_otp, verify_otp
         from app.core.exceptions import InvalidOTPError
-        code = await generate_otp("+254712345678", "customer", redis)
+        code = await generate_otp("+254712345678", redis)
         wrong = "000000" if code != "000000" else "111111"
         for _ in range(4):
             with pytest.raises(InvalidOTPError):
-                await verify_otp("+254712345678", wrong, "customer", redis)
-        code = await generate_otp("+254712345678", "customer", redis)
-        assert await verify_otp("+254712345678", code, "customer", redis) is True
+                await verify_otp("+254712345678", wrong, redis)
+        code = await generate_otp("+254712345678", redis)
+        assert await verify_otp("+254712345678", code, redis) is True
 
     async def test_rate_limit_exceeded(self, mock_redis):
         redis, store = mock_redis
@@ -251,10 +251,11 @@ class TestAuthEndpoints:
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_otp_request_invalid_role(self, client):
+    async def test_otp_verify_invalid_role(self, client):
         c, _ = client
-        resp = await c.post("/auth/otp/request", json={
+        resp = await c.post("/auth/otp/verify", json={
             "phone": "0712345678",
+            "otp_code": "123456",
             "role": "superuser",   # Invalid
         })
         assert resp.status_code == 422
@@ -432,3 +433,121 @@ class TestLogout:
         assert resp.status_code == 401
 
 
+
+
+# ── Sign-up: the role is picked before the account exists ────────────────────
+def _signup_db(existing=None):
+    """Fake session: execute() finds `existing`; flush() fills in new users' ids."""
+    from datetime import datetime, timezone
+    added = []
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = existing
+    result.first.return_value = (existing.id,) if existing else None
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+
+    async def flush():
+        for obj in added:
+            obj.id = obj.id or uuid4()
+            obj.created_at = obj.created_at or datetime.now(timezone.utc)
+
+    db.add = MagicMock(side_effect=added.append)
+    db.flush = AsyncMock(side_effect=flush)
+    return db, added
+
+
+class TestSignupFlow:
+    PHONE = "+254712345678"
+
+    async def _verify(self, mock_redis, db, role=None):
+        redis, _ = mock_redis
+        from app.auth.service import verify_and_authenticate
+        with patch("app.auth.service.verify_otp", new_callable=AsyncMock):
+            return await verify_and_authenticate(self.PHONE, "123456", role, db, redis)
+
+    async def test_existing_user_logs_in_with_own_role(self, mock_redis):
+        from app.models.user import UserRole
+        user = _user(role="merchant")
+        user.email, user.created_at = None, MagicMock(isoformat=lambda: "2026-10-01")
+        db, _ = _signup_db(existing=user)
+        resp = await self._verify(mock_redis, db)
+        assert resp.user.role == "merchant"
+        assert resp.user.is_new is False
+        assert user.role == UserRole.merchant
+
+    async def test_existing_user_with_other_role_rejected(self, mock_redis):
+        from app.core.exceptions import InsufficientRoleError
+        db, _ = _signup_db(existing=_user(role="customer"))
+        with pytest.raises(InsufficientRoleError):
+            await self._verify(mock_redis, db, role="courier")
+
+    async def test_new_number_without_role_gets_signup_token(self, mock_redis):
+        _, store = mock_redis
+        db, added = _signup_db()
+        resp = await self._verify(mock_redis, db)
+        assert resp.needs_role is True
+        assert added == []                               # No account yet
+        assert f"signup:{resp.signup_token}" in store
+
+    async def test_new_number_with_role_created_directly(self, mock_redis):
+        db, added = _signup_db()
+        resp = await self._verify(mock_redis, db, role="courier")
+        assert resp.user.role == "courier" and resp.user.is_new is True
+        assert len(added) == 1
+
+    async def test_signup_creates_account_with_chosen_role(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.service import complete_signup
+        db, added = _signup_db()
+        pending = await self._verify(mock_redis, db)
+        resp = await complete_signup(pending.signup_token, "merchant", db, redis)
+        assert resp.user.role == "merchant"
+        assert resp.user.phone == self.PHONE
+        assert resp.user.is_new is True
+        assert added[0].role.value == "merchant"
+
+    async def test_signup_token_is_single_use(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.service import complete_signup
+        from app.core.exceptions import SokoFetchException
+        db, _ = _signup_db()
+        pending = await self._verify(mock_redis, db)
+        await complete_signup(pending.signup_token, "customer", db, redis)
+        with pytest.raises(SokoFetchException) as exc:
+            await complete_signup(pending.signup_token, "courier", db, redis)
+        assert exc.value.detail["code"] == "INVALID_SIGNUP_TOKEN"
+
+    async def test_signup_refused_if_account_appeared_meanwhile(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.service import complete_signup
+        from app.core.exceptions import AlreadyExistsError
+        db, _ = _signup_db()
+        pending = await self._verify(mock_redis, db)
+        db_now, _ = _signup_db(existing=_user())
+        with pytest.raises(AlreadyExistsError):
+            await complete_signup(pending.signup_token, "customer", db_now, redis)
+
+    async def test_google_new_user_without_role_gets_signup_token(self, mock_redis):
+        redis, store = mock_redis
+        from app.auth.service import verify_google_and_authenticate, complete_signup
+        db, added = _signup_db()
+        idinfo = {"sub": "google-123", "email": "a@example.com"}
+        with patch("google.oauth2.id_token.verify_oauth2_token", return_value=idinfo):
+            pending = await verify_google_and_authenticate("tok", None, db, redis)
+        assert pending.needs_role is True and added == []
+        resp = await complete_signup(pending.signup_token, "courier", db, redis)
+        assert resp.user.role == "courier"
+        assert resp.user.email == "a@example.com"
+        assert added[0].google_sub == "google-123"
+
+    async def test_signup_cannot_choose_admin(self, client):
+        c, _ = client
+        resp = await c.post("/auth/signup", json={"signup_token": "x", "role": "admin"})
+        assert resp.status_code == 422
+
+    async def test_otp_not_tied_to_a_role(self, mock_redis):
+        # The OTP proves the phone; the role is decided after verification
+        redis, _ = mock_redis
+        from app.auth.otp import generate_otp, verify_otp
+        code = await generate_otp(self.PHONE, redis)
+        assert await verify_otp(self.PHONE, code, redis) is True

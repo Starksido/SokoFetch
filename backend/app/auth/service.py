@@ -1,7 +1,10 @@
 import hashlib
+import json
 import logging
+import secrets
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import redis.asyncio as aioredis
@@ -13,8 +16,11 @@ from app.auth.jwt import (
     create_token_pair, decode_token, revoke_token,
     claim_refresh_token, revoke_all_user_tokens,
 )
-from app.schemas.auth import UserProfile, TokenResponse
-from app.core.exceptions import AccountDisabledError, InvalidTokenError, RevokedTokenError
+from app.schemas.auth import UserProfile, TokenResponse, SignupRequiredResponse
+from app.core.exceptions import (
+    AccountDisabledError, AlreadyExistsError, InsufficientRoleError,
+    InvalidTokenError, RevokedTokenError,
+)
 
 from app.core.config import settings
 from app.core.exceptions import SokoFetchException
@@ -31,7 +37,6 @@ def _phone_hash(phone: str) -> str:
 # ── Request OTP ───────────────────────────────────────────────────────────────
 async def request_otp(
     phone: str,
-    role: str,
     db: AsyncSession,
     redis: aioredis.Redis,
 ) -> dict:
@@ -39,70 +44,128 @@ async def request_otp(
     phone = validate_phone(phone)
     await check_rate_limit(phone, redis)
 
-    code = await generate_otp(phone, role, redis)
+    code = await generate_otp(phone, redis)
     await send_otp_sms(phone, code)
 
     return {"message": "OTP sent successfully", "expires_in": 300}
+
+
+# ── Shared login helpers ──────────────────────────────────────────────────────
+SIGNUP_TOKEN_TTL = 600   # seconds the user has to pick a role
+
+
+def _check_can_log_in(user: User, requested_role: str | None) -> None:
+    if requested_role is not None and user.role.value != requested_role:
+        # A courier trying to log in as a customer, etc. — reject
+        raise InsufficientRoleError(requested_role)
+    if not user.is_active:
+        raise AccountDisabledError()
+
+
+async def _start_signup(identity: dict, redis: aioredis.Redis) -> SignupRequiredResponse:
+    """
+    The phone/Google account is verified but has no user yet. Park the
+    verified identity in Redis; POST /auth/signup turns it into an account
+    once the user has picked a role.
+    """
+    token = secrets.token_urlsafe(32)
+    await redis.setex(f"signup:{token}", SIGNUP_TOKEN_TTL, json.dumps(identity))
+    return SignupRequiredResponse(signup_token=token, expires_in=SIGNUP_TOKEN_TTL)
+
+
+async def _create_user(db: AsyncSession, **fields) -> User:
+    user = User(is_verified=True, **fields)
+    db.add(user)
+    try:
+        await db.flush()   # Get the generated UUID
+    except IntegrityError:
+        # The same phone / Google account signed up concurrently
+        raise AlreadyExistsError("Account")
+    logger.info("New user created | role=%s", user.role.value)
+    return user
+
+
+async def _token_response(
+    user: User, is_new: bool, db: AsyncSession, phone: str | None = None,
+) -> TokenResponse:
+    user.last_login = datetime.now(timezone.utc)
+    await db.flush()
+
+    user_id = str(user.id)
+    role = user.role.value
+    profile = UserProfile(
+        user_id=user_id,
+        phone=phone,
+        email=user.email,
+        role=role,
+        is_new=is_new,
+        created_at=user.created_at.isoformat(),
+    )
+    return TokenResponse(**create_token_pair(user_id, role), expires_in=1800, user=profile)
 
 
 # ── Verify OTP & issue tokens ─────────────────────────────────────────────────
 async def verify_and_authenticate(
     phone: str,
     code: str,
-    role: str,
+    role: str | None,
     db: AsyncSession,
     redis: aioredis.Redis,
-) -> TokenResponse:
+) -> TokenResponse | SignupRequiredResponse:
     """
-    Verify OTP, create user if first time, issue JWT pair.
+    Verify the OTP. An existing account is logged in with its own role.
+    A new number either gets an account straight away (role given) or a
+    signup_token to pick a role with (role omitted).
     """
     phone = validate_phone(phone)
-    await verify_otp(phone, code, role, redis)   # Raises InvalidOTPError on failure
+    await verify_otp(phone, code, redis)   # Raises InvalidOTPError on failure
 
-    # Find or create user
     ph = _phone_hash(phone)
     result = await db.execute(select(User).where(User.phone_hash == ph))
     user: User | None = result.scalar_one_or_none()
     is_new = False
 
     if user is None:
-        # First-time login — create account
-        user = User(
-            phone=phone,
-            phone_hash=ph,
-            role=UserRole(role),
-            is_verified=True,
-        )
-        db.add(user)
-        await db.flush()   # Get the generated UUID
+        if role is None:
+            return await _start_signup({"phone": phone}, redis)
+        user = await _create_user(db, phone=phone, phone_hash=ph, role=UserRole(role))
         is_new = True
-        logger.info("New user created | role=%s", role)
     else:
-        # Existing user — verify role matches
-        if user.role.value != role:
-            # A courier trying to log in as a customer, etc. — reject
-            from app.core.exceptions import InsufficientRoleError
-            raise InsufficientRoleError(role)
-        if not user.is_active:
-            raise AccountDisabledError()
+        _check_can_log_in(user, role)
 
-    # Update last login
-    user.last_login = datetime.now(timezone.utc)
-    await db.flush()
+    return await _token_response(user, is_new, db, phone=phone)
 
-    # Issue tokens
-    user_id = str(user.id)
-    tokens = create_token_pair(user_id, role)
 
-    profile = UserProfile(
-        user_id=user_id,
-        phone=phone,
-        role=role,
-        is_new=is_new,
-        created_at=user.created_at.isoformat(),
+# ── Sign up: create the account once a role is picked ─────────────────────────
+async def complete_signup(
+    signup_token: str,
+    role: str,
+    db: AsyncSession,
+    redis: aioredis.Redis,
+) -> TokenResponse:
+    raw = await redis.getdel(f"signup:{signup_token}")   # Single use
+    if not raw:
+        raise SokoFetchException(
+            400, "INVALID_SIGNUP_TOKEN",
+            "Sign-up session expired. Please verify your phone or Google account again.",
+        )
+    identity = json.loads(raw)
+
+    if "phone" in identity:
+        phone = identity["phone"]
+        ph = _phone_hash(phone)
+        if (await db.execute(select(User.id).where(User.phone_hash == ph))).first():
+            raise AlreadyExistsError("Account")
+        user = await _create_user(db, phone=phone, phone_hash=ph, role=UserRole(role))
+        return await _token_response(user, True, db, phone=phone)
+
+    google_sub = identity["google_sub"]
+    if (await db.execute(select(User.id).where(User.google_sub == google_sub))).first():
+        raise AlreadyExistsError("Account")
+    user = await _create_user(
+        db, google_sub=google_sub, email=identity.get("email"), role=UserRole(role),
     )
-
-    return TokenResponse(**tokens, expires_in=1800, user=profile)
+    return await _token_response(user, True, db)
 
 
 # ── Refresh access token ──────────────────────────────────────────────────────
@@ -147,12 +210,14 @@ async def logout(
 # ── Google Sign-In: verify token, find-or-create user, issue tokens ─────────
 async def verify_google_and_authenticate(
     id_token_str: str,
-    role: str,
+    role: str | None,
     db: AsyncSession,
-) -> GoogleTokenResponse:
+    redis: aioredis.Redis,
+) -> GoogleTokenResponse | SignupRequiredResponse:
     """
-    Verify a Google ID token, find or create a User by google_sub,
-    and issue the same JWT pair the OTP flow issues.
+    Verify a Google ID token, then behave like OTP verify: an existing
+    account logs in with its own role; a new one needs a role (given here,
+    or picked later through POST /auth/signup).
     """
     from google.oauth2 import id_token as google_id_token
     from google.auth.transport import requests as google_requests
@@ -174,34 +239,20 @@ async def verify_google_and_authenticate(
     is_new = False
 
     if user is None:
-        # First-time Google login — create account
-        user = User(
-            google_sub=google_sub,
-            email=google_email,
-            role=UserRole(role),
-            is_verified=True,
-        )
-        db.add(user)
-        await db.flush()
-        is_new = True
-        logger.info("New Google user created | role=%s", role)
-
+        if role is None:
+            return await _start_signup({"google_sub": google_sub, "email": google_email}, redis)
         # merchant/courier profiles are created separately by their own
-        # onboarding endpoints, entering at status=pending_review /
-        # registered — same as phone-based signup. Nothing extra to do here.
+        # onboarding endpoints — same as phone-based signup.
+        user = await _create_user(db, google_sub=google_sub, email=google_email, role=UserRole(role))
+        is_new = True
     else:
-        if user.role.value != role:
-            from app.core.exceptions import InsufficientRoleError
-            raise InsufficientRoleError(role)
-        if not user.is_active:
-            raise AccountDisabledError()
+        _check_can_log_in(user, role)
 
     user.last_login = datetime.now(timezone.utc)
     await db.flush()
 
     user_id = str(user.id)
-    tokens = create_token_pair(user_id, role)
-
+    role = user.role.value
     profile = GoogleUserProfile(
         user_id=user_id,
         email=user.email,
@@ -210,4 +261,4 @@ async def verify_google_and_authenticate(
         created_at=user.created_at.isoformat(),
     )
 
-    return GoogleTokenResponse(**tokens, expires_in=1800, user=profile)
+    return GoogleTokenResponse(**create_token_pair(user_id, role), expires_in=1800, user=profile)
