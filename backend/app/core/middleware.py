@@ -16,16 +16,27 @@ _SUSPICIOUS = [
 # Fields that must NEVER appear in logs
 _SENSITIVE_FIELDS = {"otp", "otp_code", "password", "token", "card_number", "cvv", "pin"}
 
+# Only text bodies are scanned. Binary uploads (multipart images) are close to
+# random bytes and would match the short patterns above by chance.
+_SCANNED_CONTENT_TYPES = ("application/json", "application/x-www-form-urlencoded")
+
+
+def _is_scanned(request: Request) -> bool:
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    return content_type in _SCANNED_CONTENT_TYPES
+
 
 async def security_middleware(request: Request, call_next):
     start = time.perf_counter()
 
-    # ── 1. Inspect request body for attack patterns ───────────────────────────
-    body_bytes = await request.body()
-    body_str = body_bytes.decode("utf-8", errors="replace")
+    # ── 1. Inspect text request bodies for attack patterns ────────────────────
+    body_str = ""
+    if _is_scanned(request):
+        body_bytes = await request.body()
+        body_str = body_bytes.decode("utf-8", errors="replace")
 
     for pattern in _SUSPICIOUS:
-        if pattern.search(body_str):
+        if body_str and pattern.search(body_str):
             logger.warning(
                 "Suspicious payload blocked | path=%s | ip=%s",
                 request.url.path, request.client.host if request.client else "unknown",
