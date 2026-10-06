@@ -1,13 +1,17 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import Literal
 
 
 class Settings(BaseSettings):
     # ── App ───────────────────────────────────────────────────────────────────
     APP_NAME: str = "Soko Fetch"
     BASE_URL: str = "http://localhost:8000"
-    ENVIRONMENT: str = "development"
-    DEBUG: bool = True
+    # Required, no default: a forgotten setting must not silently put
+    # production into development mode (OTPs logged, /docs public, CORS *)
+    ENVIRONMENT: Literal["development", "staging", "production"]
+    DEBUG: bool = False
 
     # ── Database ──────────────────────────────────────────────────────────────
     DATABASE_URL: str
@@ -61,6 +65,28 @@ class Settings(BaseSettings):
 
     # -- Google Sign-In --------------------------------------------------------
     GOOGLE_OAUTH_CLIENT_ID: str = "148030160920-2r3umll1quj3k9sfhnajm588edspnfsn.apps.googleusercontent.com"
+
+    @model_validator(mode="after")
+    def _require_production_secrets(self) -> "Settings":
+        if self.ENVIRONMENT != "production":
+            return self
+        missing = [
+            name for name in (
+                "AT_API_KEY", "MPESA_CONSUMER_KEY", "MPESA_CONSUMER_SECRET",
+                "MPESA_PASSKEY", "MPESA_CALLBACK_TOKEN",
+            )
+            if not getattr(self, name)
+        ]
+        if self.AT_USERNAME == "sandbox":
+            missing.append("AT_USERNAME (still 'sandbox')")
+        if len(self.JWT_SECRET) < 32 or self.JWT_SECRET.startswith("REPLACE_"):
+            missing.append("JWT_SECRET (placeholder or shorter than 32 characters)")
+        if missing:
+            raise ValueError(
+                "ENVIRONMENT=production but these settings are missing or unsafe: "
+                + ", ".join(missing)
+            )
+        return self
 
     @property
     def is_production(self) -> bool:
