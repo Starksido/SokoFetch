@@ -1,0 +1,45 @@
+name: soko_fetch
+description: Soko Fetch - one app for customers, merchants, couriers and admins
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ── Core ────────────────────────────────────────────────────────────────────
+  flutter_riverpod: ^2.6.1
+  dio: ^5.9.2
+  flutter_secure_storage: ^9.0.0
+  local_auth: ^2.3.0
+  google_sign_in: ^6.3.0
+
+  # ── Maps & location (customer, courier) ─────────────────────────────────────
+  google_maps_flutter: ^2.14.2
+  geolocator: ^11.1.0
+
+  # ── Merchant & courier ──────────────────────────────────────────────────────
+  audioplayers: ^6.7.1         # New order alert
+  wakelock_plus: ^1.5.2        # Keep screen on while dashboard / dispatch is open
+  image_picker: ^1.2.2         # Menu photos, rider documents, proof of delivery
+  fl_chart: ^0.68.0            # Earnings charts
+  url_launcher: ^6.3.1         # Courier: open directions in Google Maps
+
+  # ── UI ──────────────────────────────────────────────────────────────────────
+  cached_network_image: ^3.4.0
+  shimmer: ^3.0.0
+  flutter_rating_bar: ^4.0.1
+  pinput: ^4.0.0
+  timeago: ^3.7.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
