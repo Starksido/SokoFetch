@@ -39,11 +39,15 @@ class StatusPill extends StatelessWidget {
           Icon(icon, size: 14, color: fg),
           const SizedBox(width: SfSpace.xxs),
         ],
-        Text(label,
-            style: Theme.of(context)
-                .textTheme
-                .labelSmall!
-                .copyWith(color: fg)),
+        Flexible(
+          child: Text(label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelSmall!
+                  .copyWith(color: fg)),
+        ),
       ]),
     );
   }

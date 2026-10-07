@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import '../../../../core/theme.dart';
+import '../../../../core/ui/ui.dart';
 import '../../../../core/api_client.dart';
 
 /// Shown after login when the account has no shop yet (GET /merchant/me → 404).
@@ -78,76 +78,92 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Set up your shop')),
+      bottomNavigationBar: BottomCtaBar(
+          label: 'Create shop', loading: _saving, onPressed: _submit),
       body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              const Text(
-                'Tell customers about your shop. You can change these details later.',
-                style: TextStyle(color: AppTheme.mgray),
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _shopName,
-                decoration: const InputDecoration(labelText: 'Shop name'),
-                textCapitalization: TextCapitalization.words,
-                validator: (v) => (v == null || v.trim().length < 2)
-                    ? 'Enter your shop name' : null,
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _category,
-                decoration: const InputDecoration(labelText: 'Category'),
-                items: [
+        child: MaxWidth(
+          maxWidth: 560,
+          child: Form(
+            key: _formKey,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                  SfSpace.lg, SfSpace.xl, SfSpace.lg, SfSpace.lg),
+              children: [
+                Text('Set up your shop', style: text.headlineMedium),
+                const SizedBox(height: SfSpace.xs),
+                Text(
+                  'Tell customers about your shop. You can change these details later.',
+                  style: text.bodyLarge!.copyWith(color: SfColors.inkMuted),
+                ),
+                const SizedBox(height: SfSpace.xl),
+                TextFormField(
+                  controller: _shopName,
+                  decoration: const InputDecoration(
+                    labelText: 'Shop name',
+                    prefixIcon: Icon(Icons.storefront_outlined),
+                  ),
+                  textCapitalization: TextCapitalization.words,
+                  validator: (v) => (v == null || v.trim().length < 2)
+                      ? 'Enter your shop name'
+                      : null,
+                ),
+                const SizedBox(height: SfSpace.lg),
+                Text('What do you sell?', style: text.titleSmall),
+                const SizedBox(height: SfSpace.xs),
+                Wrap(spacing: SfSpace.xs, runSpacing: SfSpace.xs, children: [
                   for (final e in _categories.entries)
-                    DropdownMenuItem(value: e.key, child: Text(e.value)),
+                    ChoiceChip(
+                      label: Text(e.value),
+                      selected: _category == e.key,
+                      onSelected: (_) => setState(() => _category = e.key),
+                    ),
+                ]),
+                const SizedBox(height: SfSpace.lg),
+                TextFormField(
+                  controller: _address,
+                  decoration: const InputDecoration(
+                    labelText: 'Shop address',
+                    prefixIcon: Icon(Icons.place_outlined),
+                  ),
+                  validator: (v) => (v == null || v.trim().length < 5)
+                      ? 'Enter the full address'
+                      : null,
+                ),
+                const SizedBox(height: SfSpace.sm),
+                TextFormField(
+                  controller: _city,
+                  decoration: const InputDecoration(
+                    labelText: 'City',
+                    prefixIcon: Icon(Icons.location_city_outlined),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Enter a city' : null,
+                ),
+                const SizedBox(height: SfSpace.sm),
+                TextFormField(
+                  controller: _description,
+                  decoration:
+                      const InputDecoration(labelText: 'Description (optional)'),
+                  maxLines: 3,
+                  minLines: 2,
+                ),
+                const SizedBox(height: SfSpace.sm),
+                TextFormField(
+                  controller: _payoutPhone,
+                  decoration: const InputDecoration(
+                    labelText: 'M-Pesa number for payouts (optional)',
+                    prefixIcon: Icon(Icons.phone_iphone_rounded),
+                  ),
+                  keyboardType: TextInputType.phone,
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: SfSpace.md),
+                  InlineMessage(_error!),
                 ],
-                onChanged: (v) => setState(() => _category = v ?? _category),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _address,
-                decoration: const InputDecoration(labelText: 'Shop address'),
-                validator: (v) => (v == null || v.trim().length < 5)
-                    ? 'Enter the full address' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _city,
-                decoration: const InputDecoration(labelText: 'City'),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Enter a city' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _description,
-                decoration: const InputDecoration(labelText: 'Description (optional)'),
-                maxLines: 3,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _payoutPhone,
-                decoration: const InputDecoration(
-                    labelText: 'M-Pesa payout number (optional)'),
-                keyboardType: TextInputType.phone,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: const TextStyle(color: AppTheme.red)),
               ],
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _saving ? null : _submit,
-                child: _saving
-                    ? const SizedBox(
-                        height: 20, width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Create shop'),
-              ),
-            ],
+            ),
           ),
         ),
       ),

@@ -3,9 +3,10 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:timeago/timeago.dart' as timeago;
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../../../../core/theme.dart';
+import '../../../../core/ui/ui.dart';
 import '../../models/models.dart';
 import '../../../../core/api_client.dart';
 import '../../providers/providers.dart';
@@ -23,6 +24,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   final _audio = AudioPlayer();
   Set<String> _knownOrderIds = {};
   bool _isOpen = true;
+  _Tab _tab = _Tab.newOrders;
+  String? _selectedId; // Tablet split view
 
   @override
   void initState() {
@@ -82,420 +85,220 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     super.dispose();
   }
 
+  List<Order> _ordersFor(_Tab tab, List<Order> orders) => switch (tab) {
+        _Tab.newOrders => orders.where((o) => o.isPending).toList(),
+        _Tab.preparing =>
+          orders.where((o) => o.isConfirmed || o.isPreparing).toList(),
+        _Tab.ready => orders
+            .where((o) => !o.isPending && !o.isConfirmed && !o.isPreparing && !o.isTerminal)
+            .toList(),
+      };
+
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     final liveOrders = ref.watch(liveOrdersProvider);
-    final profileAsync = ref.watch(merchantProfileProvider);
-    final earningsAsync = ref.watch(todayEarningsProvider);
+    final profile = ref.watch(merchantProfileProvider).valueOrNull;
+    final earnings = ref.watch(todayEarningsProvider).valueOrNull;
+    final wide = Breakpoint.of(context) == Breakpoint.expanded;
 
     return Scaffold(
-      backgroundColor: AppTheme.lgray,
-      appBar: AppBar(
-        title: const Text('Soko Fetch'),
-        actions: [
-          IconButton(
-            tooltip: 'Notifications',
-            onPressed: () {},
-            icon:
-                const Icon(Icons.notifications_outlined, color: AppTheme.mgray),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: CircleAvatar(
-              radius: 16,
-              backgroundColor: AppTheme.primaryContainer,
-              child: Text(
-                profileAsync.maybeWhen(
-                  data: (p) => _initials(p.shopName),
-                  orElse: () => 'SF',
-                ),
-                style: const TextStyle(
-                  color: Color(0xFF5F1900),
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-      body: liveOrders.when(
-        loading: () => const Center(
-            child: CircularProgressIndicator(color: AppTheme.accent)),
-        error: (_, __) =>
-            _ErrorPanel(onRetry: () => ref.invalidate(liveOrdersProvider)),
-        data: (orders) {
-          final pending = orders.where((o) => o.isPending).toList();
-          final active =
-              orders.where((o) => !o.isPending && !o.isTerminal).toList();
-          final toPrep =
-              orders.where((o) => o.isConfirmed || o.isPreparing).toList();
-          final totalRevenue = earningsAsync.maybeWhen(
-            data: (data) => parseNum(
-              data['gross_revenue'] ??
-                  data['total_revenue'] ??
-                  data['today_revenue'] ??
-                  data['net_payout'],
-            ),
-            orElse: () => orders.fold<double>(0, (sum, o) => sum + o.subtotal),
-          );
+      body: SafeArea(
+        bottom: false,
+        child: liveOrders.when(
+          loading: () => const LoadingList(),
+          error: (_, __) => ErrorState(
+              message: "Couldn't load your orders.",
+              onRetry: () => ref.invalidate(liveOrdersProvider)),
+          data: (orders) {
+            final list = _ordersFor(_tab, orders);
+            final revenue = earnings == null
+                ? orders.fold<double>(0, (sum, o) => sum + o.subtotal)
+                : parseNum(earnings['gross_revenue'] ??
+                    earnings['total_revenue'] ??
+                    earnings['net_payout']);
 
-          return RefreshIndicator(
-            color: AppTheme.accent,
-            onRefresh: () async {
+            final header = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    SfSpace.md, SfSpace.md, SfSpace.md, 0),
+                child: Row(children: [
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(profile?.shopName ?? 'Your shop',
+                          style: text.headlineSmall,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                      Text(_isOpen ? 'Open · taking orders' : 'Paused · not taking orders',
+                          style: text.bodyMedium!.copyWith(
+                              color: _isOpen ? SfColors.success : SfColors.inkMuted)),
+                    ]),
+                  ),
+                  Switch(value: _isOpen, onChanged: _toggleShopOpen),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(SfSpace.md),
+                child: Row(children: [
+                  Expanded(
+                    child: StatTile(
+                        label: 'Today',
+                        value: formatKes(revenue),
+                        icon: Icons.payments_outlined),
+                  ),
+                  const SizedBox(width: SfSpace.sm),
+                  Expanded(
+                    child: StatTile(
+                        label: 'Orders',
+                        value: '${orders.length}',
+                        icon: Icons.receipt_long_outlined),
+                  ),
+                  const SizedBox(width: SfSpace.sm),
+                  Expanded(
+                    child: StatTile(
+                        label: 'Avg. prep',
+                        value: '${profile?.avgPrepMinutes ?? 20} min',
+                        icon: Icons.timer_outlined),
+                  ),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: SfSpace.md),
+                child: Wrap(spacing: SfSpace.xs, runSpacing: SfSpace.xs, children: [
+                  for (final t in _Tab.values)
+                    ChoiceChip(
+                      label: Text('${t.label} · ${_ordersFor(t, orders).length}'),
+                      selected: _tab == t,
+                      onSelected: (_) => setState(() {
+                        _tab = t;
+                        _selectedId = null;
+                      }),
+                    ),
+                ]),
+              ),
+              const SizedBox(height: SfSpace.sm),
+            ]);
+
+            final empty = EmptyState(
+              icon: _tab.icon,
+              title: _tab.emptyTitle,
+              message: _tab == _Tab.newOrders && !_isOpen
+                  ? 'Your shop is paused. Switch it on to take orders.'
+                  : _tab.emptyMessage,
+            );
+
+            Future<void> refresh() async {
               ref.invalidate(liveOrdersProvider);
               ref.invalidate(todayEarningsProvider);
-            },
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 104),
-              children: [
-                _StatusHeader(
-                  isOpen: _isOpen,
-                  onChanged: _toggleShopOpen,
-                  shopName: profileAsync.maybeWhen(
-                    data: (p) => p.shopName,
-                    orElse: () => 'Your shop',
-                  ),
+            }
+
+            if (!wide) {
+              return RefreshIndicator(
+                onRefresh: refresh,
+                child: ListView(
+                  padding: const EdgeInsets.only(bottom: SfSpace.xl),
+                  children: [
+                    header,
+                    if (list.isEmpty)
+                      Padding(padding: const EdgeInsets.only(top: SfSpace.xl), child: empty)
+                    else
+                      for (final o in list)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(
+                              SfSpace.md, 0, SfSpace.md, SfSpace.sm),
+                          child: OrderCard(
+                            key: ValueKey(o.id),
+                            order: o,
+                            onStatusChanged: () => ref.invalidate(liveOrdersProvider),
+                          ),
+                        ),
+                  ],
                 ),
-                const SizedBox(height: 16),
-                _StatsGrid(
-                  revenue: totalRevenue,
-                  orders: orders.length,
-                  avgPrep: profileAsync.maybeWhen(
-                    data: (p) => p.avgPrepMinutes,
-                    orElse: () => 12,
-                  ),
+              );
+            }
+
+            // Tablet: list on the left, the selected order on the right
+            final selected = list.where((o) => o.id == _selectedId).firstOrNull ??
+                list.firstOrNull;
+            return Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              SizedBox(
+                width: 400,
+                child: RefreshIndicator(
+                  onRefresh: refresh,
+                  child: ListView(children: [
+                    header,
+                    if (list.isEmpty)
+                      Padding(padding: const EdgeInsets.only(top: SfSpace.xl), child: empty),
+                    for (final o in list)
+                      _OrderRow(
+                        order: o,
+                        selected: o.id == selected?.id,
+                        onTap: () => setState(() => _selectedId = o.id),
+                      ),
+                  ]),
                 ),
-                const SizedBox(height: 24),
-                _SectionHeader(
-                    title: 'New Orders',
-                    count: pending.length,
-                    action: 'View All'),
-                const SizedBox(height: 12),
-                if (pending.isEmpty)
-                  _QuietPanel(
-                    icon: Icons.receipt_long_outlined,
-                    title: 'No new orders',
-                    body: _isOpen
-                        ? 'Fresh orders will appear here automatically.'
-                        : 'Your shop is closed. Open it to receive orders.',
-                  )
-                else
-                  ...pending.map((order) => OrderCard(
-                        key: ValueKey(order.id),
-                        order: order,
-                        onStatusChanged: () =>
-                            ref.invalidate(liveOrdersProvider),
-                      )),
-                const SizedBox(height: 24),
-                _SectionHeader(title: 'To Prep', count: toPrep.length),
-                const SizedBox(height: 12),
-                if (toPrep.isEmpty)
-                  const _QuietPanel(
-                    icon: Icons.restaurant_menu_rounded,
-                    title: 'Prep queue is clear',
-                    body: 'Accepted orders will move into this section.',
-                  )
-                else
-                  ...toPrep.map((order) => OrderCard(
-                        key: ValueKey(order.id),
-                        order: order,
-                        onStatusChanged: () =>
-                            ref.invalidate(liveOrdersProvider),
-                      )),
-                if (active.isNotEmpty) ...[
-                  const SizedBox(height: 24),
-                  _SectionHeader(title: 'In Progress', count: active.length),
-                  const SizedBox(height: 12),
-                  ...active.map((order) => OrderCard(
-                        key: ValueKey(order.id),
-                        order: order,
-                        onStatusChanged: () =>
-                            ref.invalidate(liveOrdersProvider),
-                      )),
-                ],
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  String _initials(String value) {
-    final parts =
-        value.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return 'SF';
-    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
-    return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-  }
-}
-
-class _StatusHeader extends StatelessWidget {
-  final bool isOpen;
-  final ValueChanged<bool> onChanged;
-  final String shopName;
-
-  const _StatusHeader({
-    required this.isOpen,
-    required this.onChanged,
-    required this.shopName,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.outlineVariant),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color:
-                  isOpen ? AppTheme.secondaryContainer : AppTheme.surfaceHigh,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              isOpen ? Icons.storefront_rounded : Icons.storefront_outlined,
-              color: isOpen ? AppTheme.secondary : AppTheme.mgray,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(shopName,
-                    style: const TextStyle(fontWeight: FontWeight.w800)),
-                Text(
-                  isOpen ? 'Open and accepting orders' : 'Closed to new orders',
-                  style: const TextStyle(color: AppTheme.mgray, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: isOpen,
-            onChanged: onChanged,
-            activeColor: AppTheme.secondary,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StatsGrid extends StatelessWidget {
-  final double revenue;
-  final int orders;
-  final int avgPrep;
-
-  const _StatsGrid({
-    required this.revenue,
-    required this.orders,
-    required this.avgPrep,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: AppTheme.primaryContainer,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Stack(
-            children: [
-              Positioned(
-                right: -8,
-                bottom: -20,
-                child: Icon(Icons.payments_rounded,
-                    size: 112, color: Colors.black.withValues(alpha: 0.08)),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    "Today's Total Revenue",
-                    style: TextStyle(
-                      color: Color(0xFF5F1900),
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'KES ${revenue.toStringAsFixed(0)}',
-                    style: const TextStyle(
-                      color: Color(0xFF5F1900),
-                      fontSize: 32,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: selected == null
+                    ? const EmptyState(
+                        icon: Icons.touch_app_outlined,
+                        title: 'No order selected',
+                        message: 'Orders you pick from the list show here.')
+                    : SingleChildScrollView(
+                        padding: const EdgeInsets.all(SfSpace.lg),
+                        child: MaxWidth(
+                          child: OrderCard(
+                            key: ValueKey(selected.id),
+                            order: selected,
+                            onStatusChanged: () => ref.invalidate(liveOrdersProvider),
+                          ),
+                        ),
+                      ),
               ),
-            ],
-          ),
+            ]);
+          },
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _MiniStat(
-                icon: Icons.shopping_bag_rounded,
-                label: 'Orders',
-                value: '$orders',
-                color: AppTheme.accent,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _MiniStat(
-                icon: Icons.timer_rounded,
-                label: 'Avg. Prep',
-                value: '${avgPrep}m',
-                color: AppTheme.secondary,
-              ),
-            ),
-          ],
-        ),
-      ],
+      ),
     );
   }
 }
 
-class _MiniStat extends StatelessWidget {
-  final IconData icon;
+enum _Tab {
+  newOrders('New', Icons.notifications_none_rounded, 'No new orders',
+      'New orders appear here automatically.'),
+  preparing('Preparing', Icons.restaurant_menu_rounded, 'Nothing to prepare',
+      'Orders you accept move here.'),
+  ready('Ready', Icons.delivery_dining_outlined, 'Nothing waiting for a rider',
+      'Orders ready for pickup show here until a rider collects them.');
+
+  const _Tab(this.label, this.icon, this.emptyTitle, this.emptyMessage);
   final String label;
-  final String value;
-  final Color color;
-
-  const _MiniStat({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: color),
-          const SizedBox(height: 10),
-          Text(label,
-              style: const TextStyle(color: AppTheme.mgray, fontSize: 12)),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  final String title;
-  final int count;
-  final String? action;
-
-  const _SectionHeader({required this.title, required this.count, this.action});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Text(
-            '$title ($count)',
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-          ),
-        ),
-        if (action != null)
-          Text(
-            action!,
-            style: const TextStyle(
-                color: AppTheme.accent, fontWeight: FontWeight.w700),
-          ),
-      ],
-    );
-  }
-}
-
-class _QuietPanel extends StatelessWidget {
   final IconData icon;
-  final String title;
-  final String body;
-
-  const _QuietPanel({
-    required this.icon,
-    required this.title,
-    required this.body,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(22),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.outlineVariant),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 42, color: AppTheme.mgray),
-          const SizedBox(height: 10),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-          const SizedBox(height: 4),
-          Text(body,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: AppTheme.mgray)),
-        ],
-      ),
-    );
-  }
+  final String emptyTitle;
+  final String emptyMessage;
 }
 
-class _ErrorPanel extends StatelessWidget {
-  final VoidCallback onRetry;
+/// Compact order row for the tablet list.
+class _OrderRow extends StatelessWidget {
+  const _OrderRow(
+      {required this.order, required this.selected, required this.onTap});
 
-  const _ErrorPanel({required this.onRetry});
+  final Order order;
+  final bool selected;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.wifi_off_rounded, size: 52, color: AppTheme.mgray),
-            const SizedBox(height: 12),
-            const Text('Could not load orders',
-                style: TextStyle(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 12),
-            ElevatedButton(onPressed: onRetry, child: const Text('Retry')),
-          ],
-        ),
+    final (label, tone) = merchantStatusStyle(order.status);
+    return Material(
+      color: selected ? SfColors.surface2 : SfColors.surface,
+      child: ListRow(
+        title: '#${order.id.substring(0, 8).toUpperCase()}',
+        subtitle:
+            '${order.itemCount} item${order.itemCount == 1 ? '' : 's'} · ${timeago.format(order.createdAt)}',
+        trailing: StatusPill(label, tone: tone),
+        onTap: onTap,
       ),
     );
   }

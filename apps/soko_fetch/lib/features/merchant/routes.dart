@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme.dart';
+import '../../core/ui/ui.dart';
 import 'providers/providers.dart';
 import 'screens/dashboard/dashboard_screen.dart';
 import 'screens/earnings/earnings_screen.dart';
@@ -20,7 +20,7 @@ Route<dynamic>? merchantRoute(RouteSettings s) {
   return MaterialPageRoute(builder: (_) => page, settings: s);
 }
 
-// ── Main shell with bottom navigation ────────────────────────────────────────
+/// Merchant area: bottom navigation on phones, a side rail on tablets.
 class MerchantShell extends ConsumerStatefulWidget {
   const MerchantShell({super.key});
   @override
@@ -59,46 +59,84 @@ class _MerchantShellState extends ConsumerState<MerchantShell> {
 
   @override
   Widget build(BuildContext context) {
-    final pendingCount = ref.watch(pendingOrderCountProvider);
+    final pending = ref.watch(pendingOrderCountProvider);
+    Widget ordersIcon(IconData icon) => Badge(
+          isLabelVisible: pending > 0,
+          label: Text('$pending'),
+          backgroundColor: SfColors.brand,
+          child: Icon(icon),
+        );
+    final body = IndexedStack(index: _index, children: _screens);
+
+    if (Breakpoint.of(context) == Breakpoint.expanded) {
+      return Scaffold(
+        body: Row(children: [
+          SafeArea(
+            child: NavigationRail(
+              selectedIndex: _index,
+              onDestinationSelected: (i) => setState(() => _index = i),
+              labelType: NavigationRailLabelType.all,
+              leading: const Padding(
+                padding: EdgeInsets.symmetric(vertical: SfSpace.md),
+                child: SokoMark(size: 40),
+              ),
+              destinations: [
+                NavigationRailDestination(
+                    icon: ordersIcon(Icons.receipt_long_outlined),
+                    selectedIcon: ordersIcon(Icons.receipt_long_rounded),
+                    label: const Text('Orders')),
+                const NavigationRailDestination(
+                    icon: Icon(Icons.menu_book_outlined),
+                    selectedIcon: Icon(Icons.menu_book_rounded),
+                    label: Text('Menu')),
+                const NavigationRailDestination(
+                    icon: Icon(Icons.bar_chart_outlined),
+                    selectedIcon: Icon(Icons.bar_chart_rounded),
+                    label: Text('Earnings')),
+                const NavigationRailDestination(
+                    icon: Icon(Icons.storefront_outlined),
+                    selectedIcon: Icon(Icons.storefront_rounded),
+                    label: Text('Shop')),
+              ],
+            ),
+          ),
+          const VerticalDivider(width: 1),
+          Expanded(child: body),
+        ]),
+      );
+    }
 
     return Scaffold(
-      body: IndexedStack(index: _index, children: _screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        backgroundColor: Colors.white,
-        indicatorColor: AppTheme.accent.withValues(alpha: 0.12),
-        destinations: [
-          NavigationDestination(
-            icon: Badge(
-              isLabelVisible: pendingCount > 0,
-              label: Text('$pendingCount'),
-              child: const Icon(Icons.dashboard_outlined),
+      body: body,
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Divider(),
+        NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: (i) => setState(() => _index = i),
+          destinations: [
+            NavigationDestination(
+              icon: ordersIcon(Icons.receipt_long_outlined),
+              selectedIcon: ordersIcon(Icons.receipt_long_rounded),
+              label: 'Orders',
             ),
-            selectedIcon: Badge(
-              isLabelVisible: pendingCount > 0,
-              label: Text('$pendingCount'),
-              child: const Icon(Icons.dashboard),
+            const NavigationDestination(
+              icon: Icon(Icons.menu_book_outlined),
+              selectedIcon: Icon(Icons.menu_book_rounded),
+              label: 'Menu',
             ),
-            label: 'Orders',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.restaurant_menu_outlined),
-            selectedIcon: Icon(Icons.restaurant_menu),
-            label: 'Menu',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart),
-            label: 'Earnings',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.store_outlined),
-            selectedIcon: Icon(Icons.store),
-            label: 'Profile',
-          ),
-        ],
-      ),
+            const NavigationDestination(
+              icon: Icon(Icons.bar_chart_outlined),
+              selectedIcon: Icon(Icons.bar_chart_rounded),
+              label: 'Earnings',
+            ),
+            const NavigationDestination(
+              icon: Icon(Icons.storefront_outlined),
+              selectedIcon: Icon(Icons.storefront_rounded),
+              label: 'Shop',
+            ),
+          ],
+        ),
+      ]),
     );
   }
 }

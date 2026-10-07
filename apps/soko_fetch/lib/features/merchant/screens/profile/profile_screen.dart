@@ -1,216 +1,119 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme.dart';
+
 import '../../../../core/session.dart';
+import '../../../../core/ui/ui.dart';
 import '../../providers/providers.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
+  static (String, PillTone) _status(String s) => switch (s) {
+        'active' => ('Live', PillTone.success),
+        'pending_review' => ('In review', PillTone.warning),
+        'suspended' => ('Suspended', PillTone.danger),
+        'deactivated' => ('Closed', PillTone.danger),
+        _ => (s.replaceAll('_', ' '), PillTone.neutral),
+      };
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
     final profileAsync = ref.watch(merchantProfileProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Shop Profile')),
+      appBar: AppBar(title: const Text('Shop')),
       body: profileAsync.when(
-        loading: () =>
-            const Center(child: CircularProgressIndicator(color: AppTheme.accent)),
-        error: (_, __) => Center(
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Text('Failed to load profile'),
-            const SizedBox(height: 12),
-            ElevatedButton(
-                onPressed: () => ref.invalidate(merchantProfileProvider),
-                child: const Text('Retry')),
-          ]),
-        ),
-        data: (profile) => ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // Status card
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(children: [
-                        CircleAvatar(
-                          radius: 28,
-                          backgroundColor: AppTheme.accent.withValues(alpha: 0.12),
-                          child: const Icon(Icons.storefront_outlined,
-                              size: 32, color: AppTheme.accent),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(profile.shopName,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 17)),
-                                Text(profile.category,
-                                    style: const TextStyle(
-                                        color: AppTheme.mgray, fontSize: 13)),
-                              ]),
-                        ),
-                        _StatusBadge(status: profile.status),
-                      ]),
-                      const SizedBox(height: 16),
-                      _InfoRow(
-                          icon: Icons.location_on_outlined,
-                          label: 'Address',
-                          value: profile.address),
-                      _InfoRow(
-                          icon: Icons.star_rounded,
-                          label: 'Rating',
-                          value:
-                              '${profile.rating.toStringAsFixed(1)} (${profile.ratingCount} reviews)'),
-                      _InfoRow(
-                          icon: Icons.percent_outlined,
-                          label: 'Commission rate',
-                          value: '${profile.commissionRate.toStringAsFixed(0)}%'),
-                      if (profile.payoutPhone != null)
-                        _InfoRow(
-                            icon: Icons.phone_android_outlined,
-                            label: 'Payout M-Pesa',
-                            value: profile.payoutPhone!),
-                    ]),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Quick actions
-            Card(
-              child: Column(children: [
-                _ActionTile(
-                  icon: Icons.edit_outlined,
-                  label: 'Edit Shop Details',
-                  onTap: () {},
-                ),
-                const Divider(height: 1, indent: 56),
-                _ActionTile(
-                  icon: Icons.schedule_outlined,
-                  label: 'Operating Hours',
-                  onTap: () {},
-                ),
-                const Divider(height: 1, indent: 56),
-                _ActionTile(
-                  icon: Icons.account_balance_wallet_outlined,
-                  label: 'Payout Details',
-                  onTap: () {},
-                ),
-                const Divider(height: 1, indent: 56),
-                _ActionTile(
-                  icon: Icons.help_outline,
-                  label: 'Help & Support',
-                  onTap: () {},
-                ),
-              ]),
-            ),
-            const SizedBox(height: 16),
-
-            // Pending notice
-            if (profile.isPending)
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.gold.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.gold.withValues(alpha: 0.3)),
-                ),
-                child: const Row(children: [
-                  Icon(Icons.access_time_outlined, color: AppTheme.gold),
-                  SizedBox(width: 10),
+        loading: () => const LoadingList(count: 3),
+        error: (_, __) =>
+            ErrorState(onRetry: () => ref.invalidate(merchantProfileProvider)),
+        data: (p) {
+          final (label, tone) = _status(p.status);
+          return MaxWidth(
+            child: ListView(children: [
+              Padding(
+                padding: const EdgeInsets.all(SfSpace.md),
+                child: Row(children: [
+                  SfNetworkImage(
+                    url: p.logoUrl,
+                    width: 64,
+                    height: 64,
+                    radius: SfRadius.md,
+                    fallbackIcon: Icons.storefront_outlined,
+                    fallbackLabel: p.shopName,
+                  ),
+                  const SizedBox(width: SfSpace.md),
                   Expanded(
-                    child: Text(
-                      'Your shop is pending review. Our team will approve your account within 24 hours.',
-                      style: TextStyle(fontSize: 13),
-                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(p.shopName, style: text.headlineSmall),
+                      const SizedBox(height: SfSpace.xxs),
+                      StatusPill(label, tone: tone),
+                    ]),
                   ),
                 ]),
               ),
-
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: Session.logout,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.red,
-                minimumSize: const Size.fromHeight(48),
+              if (p.isPending)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(SfSpace.md, 0, SfSpace.md, SfSpace.md),
+                  child: InlineMessage(
+                    "Your shop is being reviewed. Customers will see it once it's approved.",
+                    isError: false,
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(SfSpace.md, 0, SfSpace.md, SfSpace.md),
+                child: Row(children: [
+                  Expanded(
+                      child: StatTile(
+                          label: 'Rating',
+                          value: p.ratingCount == 0 ? 'New' : p.rating.toStringAsFixed(1),
+                          icon: Icons.star_rounded)),
+                  const SizedBox(width: SfSpace.sm),
+                  Expanded(
+                      child: StatTile(
+                          label: 'Reviews',
+                          value: '${p.ratingCount}',
+                          icon: Icons.reviews_outlined)),
+                  const SizedBox(width: SfSpace.sm),
+                  Expanded(
+                      child: StatTile(
+                          label: 'Prep time',
+                          value: '${p.avgPrepMinutes} min',
+                          icon: Icons.timer_outlined)),
+                ]),
               ),
-              child: const Text('Log Out'),
-            ),
-          ],
-        ),
+              const SectionGap(),
+              ListRow(
+                leading: const Icon(Icons.place_outlined),
+                title: 'Address',
+                subtitle: p.address,
+              ),
+              ListRow(
+                leading: const Icon(Icons.category_outlined),
+                title: 'Category',
+                subtitle: p.category.replaceAll('_', ' '),
+              ),
+              ListRow(
+                leading: const Icon(Icons.percent_rounded),
+                title: 'Soko Fetch fee',
+                subtitle: '${p.commissionRate.toStringAsFixed(0)}% of each order',
+              ),
+              ListRow(
+                leading: const Icon(Icons.phone_iphone_rounded),
+                title: 'M-Pesa payouts',
+                subtitle: p.payoutPhone ?? 'Not set',
+              ),
+              const SectionGap(),
+              ListRow(
+                leading: const Icon(Icons.logout_rounded, color: SfColors.danger),
+                title: 'Log out',
+                titleStyle: text.titleSmall!.copyWith(color: SfColors.danger),
+                onTap: Session.logout,
+              ),
+            ]),
+          );
+        },
       ),
     );
   }
 }
-
-class _StatusBadge extends StatelessWidget {
-  final String status;
-  const _StatusBadge({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final isActive = status == 'active';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: (isActive ? AppTheme.green : AppTheme.gold).withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        status.replaceAll('_', ' ').toUpperCase(),
-        style: TextStyle(
-          color: isActive ? AppTheme.green : AppTheme.gold,
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
-        ),
-      ),
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  const _InfoRow(
-      {required this.icon, required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(children: [
-          Icon(icon, size: 18, color: AppTheme.mgray),
-          const SizedBox(width: 10),
-          Text('$label: ',
-              style: const TextStyle(color: AppTheme.mgray, fontSize: 13)),
-          Expanded(
-              child: Text(value,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w500, fontSize: 13))),
-        ]),
-      );
-}
-
-class _ActionTile extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  const _ActionTile(
-      {required this.icon, required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-        leading: Icon(icon, color: AppTheme.brand),
-        title: Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
-        trailing: const Icon(Icons.chevron_right, color: AppTheme.mgray),
-        onTap: onTap,
-      );
-}
-

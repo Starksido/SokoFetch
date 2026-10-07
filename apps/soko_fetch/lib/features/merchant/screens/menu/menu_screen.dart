@@ -1,138 +1,122 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import '../../../../core/theme.dart';
-import '../../models/models.dart';
+
 import '../../../../core/api_client.dart';
+import '../../../../core/errors.dart';
+import '../../../../core/ui/ui.dart';
+import '../../models/models.dart';
 import '../../providers/providers.dart';
 
 class MenuScreen extends ConsumerWidget {
   const MenuScreen({super.key});
 
+  Future<void> _openEditor(BuildContext context, WidgetRef ref, [MenuItem? item]) async {
+    await Navigator.push(context,
+        MaterialPageRoute(builder: (_) => AddEditItemScreen(item: item)));
+    ref.invalidate(menuProvider);
+  }
+
+  Future<void> _delete(BuildContext context, WidgetRef ref, MenuItem item) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete this item?'),
+        content: Text('"${item.name}" will be removed from your menu.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: TextButton.styleFrom(foregroundColor: SfColors.danger),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await ApiClient.instance.delete('/merchant/menu/${item.id}');
+      ref.invalidate(menuProvider);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
     final menuAsync = ref.watch(menuProvider);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Menu Management'),
+        title: const Text('Menu'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () async {
-              await Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const AddEditItemScreen()));
-              ref.invalidate(menuProvider);
-            },
+          TextButton.icon(
+            onPressed: () => _openEditor(context, ref),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Add item'),
           ),
+          const SizedBox(width: SfSpace.xs),
         ],
       ),
       body: menuAsync.when(
-        loading: () =>
-            const Center(child: CircularProgressIndicator(color: AppTheme.accent)),
-        error: (e, _) => Center(
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            const Text('Failed to load menu'),
-            const SizedBox(height: 12),
-            ElevatedButton(
-                onPressed: () => ref.invalidate(menuProvider),
-                child: const Text('Retry')),
-          ]),
-        ),
+        loading: () => const LoadingList(),
+        error: (e, _) => ErrorState(onRetry: () => ref.invalidate(menuProvider)),
         data: (items) {
           if (items.isEmpty) {
-            return Center(
-              child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.restaurant_menu_outlined,
-                        size: 72, color: AppTheme.mgray),
-                    const SizedBox(height: 16),
-                    const Text('No menu items yet',
-                        style: TextStyle(color: AppTheme.mgray, fontSize: 16)),
-                    const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      onPressed: () async {
-                        await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const AddEditItemScreen()));
-                        ref.invalidate(menuProvider);
-                      },
-                      icon: const Icon(Icons.add),
-                      label: const Text('Add First Item'),
-                    ),
-                  ]),
+            return EmptyState(
+              icon: Icons.menu_book_outlined,
+              title: 'Your menu is empty',
+              message: 'Add what you sell so customers can order it.',
+              actionLabel: 'Add your first item',
+              onAction: () => _openEditor(context, ref),
             );
           }
-
-          // Group by category
-          final Map<String, List<MenuItem>> grouped = {};
+          final grouped = <String, List<MenuItem>>{};
           for (final item in items) {
             grouped.putIfAbsent(item.category, () => []).add(item);
           }
-
           return RefreshIndicator(
-            color: AppTheme.accent,
             onRefresh: () async => ref.invalidate(menuProvider),
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                for (final entry in grouped.entries) ...[
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    child: Text(entry.key,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                            color: AppTheme.brand)),
-                  ),
-                  ...entry.value.map((item) => _MenuItemTile(
-                        item: item,
-                        onToggle: (val) async {
-                          await ApiClient.instance.put(
-                              '/merchant/menu/${item.id}/availability?is_available=$val');
-                          ref.invalidate(menuProvider);
-                        },
-                        onEdit: () async {
-                          await Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) =>
-                                      AddEditItemScreen(item: item)));
-                          ref.invalidate(menuProvider);
-                        },
-                        onDelete: () async {
-                          final confirm = await showDialog<bool>(
-                            context: context,
-                            builder: (_) => AlertDialog(
-                              title: const Text('Delete Item'),
-                              content: Text(
-                                  'Delete "${item.name}"? This cannot be undone.'),
-                              actions: [
-                                TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, false),
-                                    child: const Text('Cancel')),
-                                TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(context, true),
-                                    child: const Text('Delete',
-                                        style: TextStyle(color: AppTheme.red))),
-                              ],
+            child: LayoutBuilder(builder: (context, c) {
+              final columns = c.maxWidth >= 840 ? 2 : 1;
+              final tileWidth =
+                  (c.maxWidth - SfSpace.md * 2 - SfSpace.sm * (columns - 1)) / columns;
+              return ListView(
+                padding: const EdgeInsets.only(bottom: SfSpace.xl),
+                children: [
+                  for (final entry in grouped.entries) ...[
+                    SectionHeader(entry.key),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: SfSpace.md),
+                      child: Wrap(
+                        spacing: SfSpace.sm,
+                        runSpacing: SfSpace.sm,
+                        children: [
+                          for (final item in entry.value)
+                            SizedBox(
+                              width: tileWidth,
+                              child: _MenuItemTile(
+                                item: item,
+                                onToggle: (val) async {
+                                  await ApiClient.instance.put(
+                                      '/merchant/menu/${item.id}/availability?is_available=$val');
+                                  ref.invalidate(menuProvider);
+                                },
+                                onEdit: () => _openEditor(context, ref, item),
+                                onDelete: () => _delete(context, ref, item),
+                              ),
                             ),
-                          );
-                          if (confirm == true) {
-                            await ApiClient.instance
-                                .delete('/merchant/menu/${item.id}');
-                            ref.invalidate(menuProvider);
-                          }
-                        },
-                      )),
-                  const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.all(SfSpace.md),
+                    child: Text('${items.length} items · '
+                        '${items.where((i) => !i.isAvailable).length} sold out',
+                        style: text.bodySmall),
+                  ),
                 ],
-              ],
-            ),
+              );
+            }),
           );
         },
       ),
@@ -140,93 +124,69 @@ class MenuScreen extends ConsumerWidget {
   }
 }
 
-// ── Menu item tile ─────────────────────────────────────────────────────────────
 class _MenuItemTile extends StatelessWidget {
+  const _MenuItemTile({required this.item, required this.onToggle,
+      required this.onEdit, required this.onDelete});
+
   final MenuItem item;
   final ValueChanged<bool> onToggle;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
-  const _MenuItemTile({
-    required this.item,
-    required this.onToggle,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        leading: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: item.photoUrl != null
-              ? CachedNetworkImage(
-                  imageUrl: item.photoUrl!,
-                  width: 56, height: 56,
-                  fit: BoxFit.cover,
-                  errorWidget: (_, __, ___) => _thumb())
-              : _thumb(),
-        ),
-        title: Text(item.name,
-            style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: item.isAvailable ? AppTheme.brand : AppTheme.mgray)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('KES ${item.effectivePrice.toStringAsFixed(0)}',
-                style: const TextStyle(
-                    color: AppTheme.accent, fontWeight: FontWeight.w600)),
-            if (!item.isAvailable)
-              const Text('UNAVAILABLE',
-                  style: TextStyle(
-                      color: AppTheme.red, fontSize: 10,
-                      fontWeight: FontWeight.bold)),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Switch(
-              value: item.isAvailable,
-              onChanged: onToggle,
-              activeColor: AppTheme.accent,
+      child: InkWell(
+        borderRadius: SfRadius.mdAll,
+        onTap: onEdit,
+        child: Padding(
+          padding: const EdgeInsets.all(SfSpace.sm),
+          child: Row(children: [
+            Opacity(
+              opacity: item.isAvailable ? 1 : 0.5,
+              child: SfNetworkImage(
+                url: item.photoUrl,
+                width: 64,
+                height: 64,
+                radius: SfRadius.sm,
+                fallbackIcon: Icons.shopping_basket_outlined,
+              ),
             ),
+            const SizedBox(width: SfSpace.sm),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(item.name,
+                    style: text.titleSmall,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 2),
+                Text(formatKes(item.effectivePrice), style: text.bodyMedium),
+                if (!item.isAvailable) ...[
+                  const SizedBox(height: SfSpace.xxs),
+                  const StatusPill('Sold out', tone: PillTone.danger),
+                ],
+              ]),
+            ),
+            Switch(value: item.isAvailable, onChanged: onToggle),
             PopupMenuButton<String>(
-              onSelected: (v) {
-                if (v == 'edit') onEdit();
-                if (v == 'delete') onDelete();
-              },
+              tooltip: 'More',
+              onSelected: (v) => v == 'edit' ? onEdit() : onDelete(),
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'edit', child: Text('Edit')),
                 PopupMenuItem(
                     value: 'delete',
-                    child: Text('Delete',
-                        style: TextStyle(color: AppTheme.red))),
+                    child: Text('Delete', style: TextStyle(color: SfColors.danger))),
               ],
             ),
-          ],
+          ]),
         ),
       ),
     );
   }
-
-  Widget _thumb() => Container(
-        width: 56, height: 56,
-        decoration: BoxDecoration(
-            color: AppTheme.lgray,
-            borderRadius: BorderRadius.circular(8)),
-        child: const Icon(Icons.fastfood_outlined,
-            color: AppTheme.mgray, size: 28),
-      );
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Add / Edit item screen
-// ══════════════════════════════════════════════════════════════════════════════
+// ── Add / edit item ──────────────────────────────────────────────────────────
 class AddEditItemScreen extends StatefulWidget {
   final MenuItem? item;
   const AddEditItemScreen({super.key, this.item});
@@ -236,46 +196,43 @@ class AddEditItemScreen extends StatefulWidget {
 }
 
 class _AddEditItemScreenState extends State<AddEditItemScreen> {
-  final _formKey     = GlobalKey<FormState>();
-  late final _name   = TextEditingController(text: widget.item?.name);
-  late final _desc   = TextEditingController(text: widget.item?.description);
-  late final _cat    = TextEditingController(text: widget.item?.category);
-  late final _price  = TextEditingController(
-      text: widget.item?.price.toStringAsFixed(0));
-  late final _prep   = TextEditingController(
-      text: (widget.item?.prepMinutes ?? 15).toString());
+  final _formKey = GlobalKey<FormState>();
+  late final _name = TextEditingController(text: widget.item?.name);
+  late final _desc = TextEditingController(text: widget.item?.description);
+  late final _cat = TextEditingController(text: widget.item?.category);
+  late final _price =
+      TextEditingController(text: widget.item?.price.toStringAsFixed(0));
+  late final _prep =
+      TextEditingController(text: (widget.item?.prepMinutes ?? 15).toString());
   late bool _isAvailable = widget.item?.isAvailable ?? true;
-  bool _saving       = false;
+  bool _saving = false;
+  String? _error;
 
   bool get isEdit => widget.item != null;
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
+    setState(() { _saving = true; _error = null; });
 
     final data = {
-      'name':         _name.text.trim(),
-      'description':  _desc.text.trim().isEmpty ? null : _desc.text.trim(),
-      'category':     _cat.text.trim(),
-      'price':        double.parse(_price.text.trim()),
-      'prep_minutes': int.parse(_prep.text.trim()),
+      'name': _name.text.trim(),
+      'description': _desc.text.trim().isEmpty ? null : _desc.text.trim(),
+      'category': _cat.text.trim(),
+      'price': double.parse(_price.text.trim()),
+      'prep_minutes': int.tryParse(_prep.text.trim()) ?? 15,
       'is_available': _isAvailable,
     };
 
     try {
       if (isEdit) {
-        await ApiClient.instance
-            .put('/merchant/menu/${widget.item!.id}', data: data);
+        await ApiClient.instance.put('/merchant/menu/${widget.item!.id}', data: data);
       } else {
         await ApiClient.instance.post('/merchant/menu', data: data);
       }
       if (!mounted) return;
       Navigator.pop(context);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error: $e')));
-      }
+      if (mounted) setState(() => _error = errorMessage(e, "Couldn't save the item."));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -283,77 +240,95 @@ class _AddEditItemScreenState extends State<AddEditItemScreen> {
 
   @override
   void dispose() {
-    _name.dispose(); _desc.dispose(); _cat.dispose();
-    _price.dispose(); _prep.dispose();
+    _name.dispose();
+    _desc.dispose();
+    _cat.dispose();
+    _price.dispose();
+    _prep.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(
-          title: Text(isEdit ? 'Edit Item' : 'Add Menu Item')),
+      appBar: AppBar(title: Text(isEdit ? 'Edit item' : 'New item')),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(SfSpace.md, SfSpace.xs, SfSpace.md, 0),
+            child: InlineMessage(_error!),
+          ),
+        BottomCtaBar(
+            label: isEdit ? 'Save changes' : 'Add to menu',
+            loading: _saving,
+            onPressed: _save),
+      ]),
       body: Form(
         key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            _field(_name, 'Item name *',
-                validator: (v) =>
-                    v!.isEmpty ? 'Required' : null),
-            const SizedBox(height: 12),
-            _field(_desc, 'Description (optional)', maxLines: 2),
-            const SizedBox(height: 12),
-            _field(_cat, 'Category * (e.g. Mains, Drinks, Sides)',
-                validator: (v) => v!.isEmpty ? 'Required' : null),
-            const SizedBox(height: 12),
-            _field(_price, 'Price (KES) *',
-                keyboardType: TextInputType.number,
-                validator: (v) {
-                  if (v!.isEmpty) return 'Required';
-                  if (double.tryParse(v) == null) return 'Enter a valid price';
-                  return null;
-                }),
-            const SizedBox(height: 12),
-            _field(_prep, 'Prep time (minutes)',
-                keyboardType: TextInputType.number),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              value: _isAvailable,
-              onChanged: (v) => setState(() => _isAvailable = v),
-              title: const Text('Available for ordering',
-                  style: TextStyle(fontWeight: FontWeight.w500)),
-              activeColor: AppTheme.accent,
-              contentPadding: EdgeInsets.zero,
-            ),
-            const SizedBox(height: 32),
-            ElevatedButton(
-              onPressed: _saving ? null : _save,
-              style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52)),
-              child: _saving
-                  ? const SizedBox(width: 22, height: 22,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2.5))
-                  : Text(isEdit ? 'Save Changes' : 'Add Item'),
-            ),
-          ],
+        child: MaxWidth(
+          maxWidth: 560,
+          child: ListView(
+            padding: const EdgeInsets.all(SfSpace.md),
+            children: [
+              TextFormField(
+                controller: _name,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(labelText: 'Name'),
+                validator: (v) => v!.trim().isEmpty ? 'Enter a name' : null,
+              ),
+              const SizedBox(height: SfSpace.sm),
+              TextFormField(
+                controller: _desc,
+                maxLines: 3,
+                minLines: 2,
+                textCapitalization: TextCapitalization.sentences,
+                decoration:
+                    const InputDecoration(labelText: 'Description (optional)'),
+              ),
+              const SizedBox(height: SfSpace.sm),
+              TextFormField(
+                controller: _cat,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                    labelText: 'Menu section', hintText: 'e.g. Mains, Drinks, Vegetables'),
+                validator: (v) => v!.trim().isEmpty ? 'Enter a section' : null,
+              ),
+              const SizedBox(height: SfSpace.sm),
+              Row(children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _price,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'Price', prefixText: 'KES '),
+                    validator: (v) => double.tryParse(v!.trim()) == null
+                        ? 'Enter a price'
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: SfSpace.sm),
+                Expanded(
+                  child: TextFormField(
+                    controller: _prep,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                        labelText: 'Prep time', suffixText: 'min'),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: SfSpace.xs),
+              SwitchListTile(
+                value: _isAvailable,
+                onChanged: (v) => setState(() => _isAvailable = v),
+                title: Text('Available to order', style: text.titleSmall),
+                subtitle: Text('Turn off when it runs out', style: text.bodySmall),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-
-  Widget _field(TextEditingController ctrl, String label,
-      {int maxLines = 1,
-      TextInputType? keyboardType,
-      String? Function(String?)? validator}) {
-    return TextFormField(
-      controller:   ctrl,
-      maxLines:     maxLines,
-      keyboardType: keyboardType,
-      validator:    validator,
-      decoration: InputDecoration(labelText: label),
-    );
-  }
 }
-

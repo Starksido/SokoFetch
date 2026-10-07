@@ -9,25 +9,6 @@ export 'design/typography.dart';
 class AppTheme {
   AppTheme._();
 
-  // ── Legacy colour names ────────────────────────────────────────────────────
-  // Screens not yet moved to the design tokens still use these. They point at
-  // the new palette and are removed once every role uses SfColors directly.
-  static const Color brand = SfColors.ink;
-  static const Color accent = SfColors.accentStrong;
-  static const Color primaryContainer = SfColors.accent;
-  static const Color primaryFixed = SfColors.accentSoft;
-  static const Color teal = SfColors.success;
-  static const Color secondary = SfColors.success;
-  static const Color secondaryContainer = SfColors.successSoft;
-  static const Color red = SfColors.danger;
-  static const Color gold = SfColors.rating;
-  static const Color green = SfColors.success;
-  static const Color lgray = SfColors.surface;
-  static const Color surfaceContainer = SfColors.surface2;
-  static const Color surfaceHigh = SfColors.surface3;
-  static const Color outlineVariant = SfColors.surface3;
-  static const Color mgray = SfColors.inkMuted;
-
   static WidgetStateProperty<T> _byState<T>(T selected, T other) =>
       WidgetStateProperty.resolveWith(
           (s) => s.contains(WidgetState.selected) ? selected : other);

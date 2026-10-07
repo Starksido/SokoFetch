@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:timeago/timeago.dart' as timeago;
-import '../../../../core/theme.dart';
+import '../../../../core/errors.dart';
+import '../../../../core/ui/ui.dart';
 import '../../models/models.dart';
 import '../../../../core/api_client.dart';
 
@@ -71,9 +72,8 @@ class _OrderCardState extends State<OrderCard> {
       widget.onStatusChanged();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(errorMessage(e, "Couldn't update the order."))));
       }
     } finally {
       if (mounted) setState(() => _acting = false);
@@ -88,259 +88,151 @@ class _OrderCardState extends State<OrderCard> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     final o = widget.order;
+    final (label, tone) = merchantStatusStyle(o.status);
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(SfSpace.md),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Header
           Row(children: [
             Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Order #${o.id.substring(0, 8).toUpperCase()}',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 14)),
-                    const SizedBox(height: 2),
-                    Text(timeago.format(o.createdAt),
-                        style: const TextStyle(
-                            color: AppTheme.mgray, fontSize: 12)),
-                  ]),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('#${o.id.substring(0, 8).toUpperCase()}',
+                    style: text.titleMedium),
+                Text(
+                    '${o.itemCount} item${o.itemCount == 1 ? '' : 's'} · '
+                    '${timeago.format(o.createdAt)}',
+                    style: text.bodySmall),
+              ]),
             ),
-            _StatusChip(status: o.status),
+            StatusPill(label, tone: tone),
             if (o.isPending && o.isPaid) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: SfSpace.xs),
               _CountdownBadge(seconds: _secondsLeft),
             ],
           ]),
-
-          const Divider(height: 20),
-
-          // Items list
-          ...o.items.map((item) {
-            final name = item['name'] as String? ?? 'Item';
-            final qty  = item['qty']  as int?    ?? 1;
-            final sub  = parseNum(item['subtotal']);
-            return Padding(
+          const SizedBox(height: SfSpace.sm),
+          const Divider(),
+          const SizedBox(height: SfSpace.sm),
+          for (final item in o.items)
+            Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('$qty× $name',
-                        style: const TextStyle(fontSize: 13)),
-                    Text('KES ${sub.toStringAsFixed(0)}',
-                        style: const TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w500)),
-                  ]),
-            );
-          }),
-
-          const Divider(height: 16),
-
-          // Totals
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Subtotal', style: TextStyle(color: AppTheme.mgray)),
-            Text('KES ${o.subtotal.toStringAsFixed(0)}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-          ]),
-          const SizedBox(height: 2),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            const Text('Your payout', style: TextStyle(color: AppTheme.mgray)),
-            Text('KES ${o.netPayout.toStringAsFixed(0)}',
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, color: AppTheme.accent)),
-          ]),
-
-          if (o.specialInstructions != null) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                  color: AppTheme.gold.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8)),
               child: Row(children: [
-                const Icon(Icons.info_outline,
-                    size: 14, color: AppTheme.gold),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(o.specialInstructions!,
-                      style: const TextStyle(
-                          fontSize: 12, color: AppTheme.brand)),
+                SizedBox(
+                  width: 32,
+                  child: Text('${item['qty'] ?? 1}×', style: text.titleSmall),
                 ),
+                Expanded(
+                    child: Text('${item['name'] ?? 'Item'}', style: text.bodyLarge)),
+                Text(formatKes(parseNum(item['subtotal'])), style: text.bodyMedium),
               ]),
             ),
+          if (o.specialInstructions != null) ...[
+            const SizedBox(height: SfSpace.sm),
+            InlineMessage(o.specialInstructions!, isError: false),
           ],
-
-          const SizedBox(height: 16),
-
-          // Action buttons
-          if (!_acting) _buildActions(o) else
-            const Center(
-                child: CircularProgressIndicator(color: AppTheme.accent)),
+          const SizedBox(height: SfSpace.sm),
+          Row(children: [
+            Expanded(child: Text('Your payout', style: text.bodyMedium)),
+            Text(formatKes(o.netPayout),
+                style: text.titleSmall!.copyWith(color: SfColors.accentStrong)),
+          ]),
+          const SizedBox(height: SfSpace.md),
+          if (_acting) const SfLoader() else _buildActions(o),
         ]),
       ),
     );
   }
 
   Widget _buildActions(Order o) {
+    final text = Theme.of(context).textTheme;
+    final decline = SfButton.destructive(
+      label: 'Decline',
+      onPressed: () => _updateStatus('cancelled', reason: 'Merchant declined'),
+    );
     if (o.awaitingPayment) {
       return Row(children: [
-        Expanded(
-          child: OutlinedButton(
-            onPressed: () => _updateStatus('cancelled',
-                reason: 'Merchant declined'),
-            style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppTheme.red),
-                foregroundColor: AppTheme.red),
-            child: const Text('Decline'),
-          ),
-        ),
-        const SizedBox(width: 12),
+        Expanded(child: decline),
+        const SizedBox(width: SfSpace.sm),
         const Expanded(
           flex: 2,
-          child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.hourglass_top_rounded,
-                    color: AppTheme.gold, size: 18),
-                SizedBox(width: 6),
-                Text('Awaiting payment',
-                    style: TextStyle(
-                        color: AppTheme.mgray, fontWeight: FontWeight.w600)),
-              ]),
+          child: Center(
+            child: StatusPill('Waiting for payment',
+                tone: PillTone.warning, icon: Icons.hourglass_top_rounded),
+          ),
         ),
       ]);
     }
-
     if (o.isPending) {
       return Row(children: [
-        Expanded(
-          child: OutlinedButton(
-            onPressed: () => _updateStatus('cancelled',
-                reason: 'Merchant declined'),
-            style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppTheme.red),
-                foregroundColor: AppTheme.red),
-            child: const Text('Decline'),
-          ),
-        ),
-        const SizedBox(width: 12),
+        Expanded(child: decline),
+        const SizedBox(width: SfSpace.sm),
         Expanded(
           flex: 2,
-          child: ElevatedButton(
-            onPressed: () => _updateStatus('confirmed'),
-            child: const Text('Accept Order'),
-          ),
+          child: SfButton.primary(
+              label: 'Accept', onPressed: () => _updateStatus('confirmed')),
         ),
       ]);
     }
-
     if (o.isConfirmed) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () => _updateStatus('preparing'),
-          icon: const Icon(Icons.restaurant_menu, size: 18),
-          label: const Text('Start Preparing'),
-        ),
+      return SfButton.primary(
+        label: 'Start preparing',
+        icon: Icons.restaurant_menu_rounded,
+        onPressed: () => _updateStatus('preparing'),
       );
     }
-
     if (o.isPreparing) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: () => _updateStatus('ready_for_pickup'),
-          icon: const Icon(Icons.check_circle_outline, size: 18),
-          label: const Text('Mark Ready for Pickup'),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.green),
-        ),
+      return SfButton.primary(
+        label: 'Mark ready for pickup',
+        icon: Icons.check_circle_outline_rounded,
+        onPressed: () => _updateStatus('ready_for_pickup'),
       );
     }
-
     if (o.isReadyForPickup) {
-      return Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-            color: AppTheme.accent.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(10)),
-        child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.local_shipping_outlined,
-                  color: AppTheme.accent, size: 18),
-              SizedBox(width: 8),
-              Text('Waiting for rider pickup',
-                  style: TextStyle(color: AppTheme.accent,
-                      fontWeight: FontWeight.w600)),
-            ]),
-      );
+      return Row(children: [
+        const Icon(Icons.delivery_dining_outlined, color: SfColors.accentStrong),
+        const SizedBox(width: SfSpace.xs),
+        Text('Waiting for the rider', style: text.titleSmall),
+      ]);
     }
-
     return const SizedBox.shrink();
   }
 }
 
-class _StatusChip extends StatelessWidget {
-  final String status;
-  const _StatusChip({required this.status});
-
-  Color get _color {
-    switch (status) {
-      case 'pending':          return AppTheme.red;
-      case 'confirmed':        return AppTheme.gold;
-      case 'preparing':        return AppTheme.gold;
-      case 'ready_for_pickup': return AppTheme.accent;
-      default:                 return AppTheme.mgray;
-    }
-  }
-
-  String get _label {
-    switch (status) {
-      case 'pending':          return 'NEW';
-      case 'confirmed':        return 'CONFIRMED';
-      case 'preparing':        return 'PREPARING';
-      case 'ready_for_pickup': return 'READY';
-      case 'picked_up':        return 'PICKED UP';
-      case 'in_transit':       return 'IN TRANSIT';
-      default: return status.toUpperCase();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-            color: _color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(20)),
-        child: Text(_label,
-            style: TextStyle(
-                color: _color, fontSize: 10, fontWeight: FontWeight.bold)),
-      );
-}
+/// Merchant wording for order statuses.
+(String, PillTone) merchantStatusStyle(String status) => switch (status) {
+      'pending' => ('New', PillTone.accent),
+      'confirmed' => ('Accepted', PillTone.neutral),
+      'preparing' => ('Preparing', PillTone.warning),
+      'ready_for_pickup' => ('Ready', PillTone.success),
+      'picked_up' => ('With rider', PillTone.neutral),
+      'in_transit' => ('On the way', PillTone.neutral),
+      _ => orderStatusStyle(status),
+    };
 
 class _CountdownBadge extends StatelessWidget {
   final int seconds;
   const _CountdownBadge({required this.seconds});
 
   @override
-  Widget build(BuildContext context) => Container(
-        width: 38, height: 38,
+  Widget build(BuildContext context) {
+    final urgent = seconds <= 30;
+    return Semantics(
+      label: '$seconds seconds to accept',
+      child: Container(
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
-            color: seconds <= 30
-                ? AppTheme.red.withValues(alpha: 0.12)
-                : AppTheme.lgray,
+            color: urgent ? SfColors.dangerSoft : SfColors.surface2,
             shape: BoxShape.circle),
         child: Center(
           child: Text('$seconds',
-              style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                  color: seconds <= 30 ? AppTheme.red : AppTheme.mgray)),
+              style: Theme.of(context).textTheme.labelMedium!.copyWith(
+                  color: urgent ? SfColors.danger : SfColors.ink)),
         ),
-      );
+      ),
+    );
+  }
 }
-
