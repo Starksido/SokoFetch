@@ -367,7 +367,7 @@ class _Progress extends StatelessWidget {
               height: 4,
               margin: EdgeInsets.only(right: i < 3 ? SfSpace.xxs : 0),
               decoration: BoxDecoration(
-                color: i <= step ? SfColors.ink : SfColors.surface3,
+                color: i <= step ? SfColors.brand : SfColors.surface3,
                 borderRadius: SfRadius.pillAll,
               ),
             ),

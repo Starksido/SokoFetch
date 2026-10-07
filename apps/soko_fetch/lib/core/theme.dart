@@ -35,10 +35,10 @@ class AppTheme {
   static ThemeData get light {
     final text = sfTextTheme();
     const scheme = ColorScheme.light(
-      primary: SfColors.ink,
-      onPrimary: Colors.white,
-      secondary: SfColors.accent,
-      onSecondary: SfColors.ink,
+      primary: SfColors.brand,
+      onPrimary: SfColors.onBrand,
+      secondary: SfColors.accentStrong,
+      onSecondary: SfColors.onBrand,
       tertiary: SfColors.success,
       surface: SfColors.surface,
       onSurface: SfColors.ink,
@@ -76,8 +76,8 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: SfColors.ink,
-          foregroundColor: Colors.white,
+          backgroundColor: SfColors.brand,
+          foregroundColor: SfColors.onBrand,
           disabledBackgroundColor: SfColors.surface3,
           disabledForegroundColor: SfColors.inkFaint,
           minimumSize: const Size(64, 52),
@@ -99,24 +99,24 @@ class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: SfColors.ink,
+          foregroundColor: SfColors.accentStrong,
           minimumSize: const Size(64, 52),
           padding: const EdgeInsets.symmetric(horizontal: SfSpace.lg),
-          side: const BorderSide(color: SfColors.ink),
+          side: const BorderSide(color: SfColors.brand),
           shape: pill,
           textStyle: text.labelLarge,
         ),
       ),
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: SfColors.ink,
+          foregroundColor: SfColors.accentStrong,
           shape: pill,
           textStyle: text.labelMedium,
         ),
       ),
       floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: SfColors.ink,
-        foregroundColor: Colors.white,
+        backgroundColor: SfColors.brand,
+        foregroundColor: SfColors.onBrand,
         elevation: 2,
         shape: StadiumBorder(),
       ),
@@ -134,7 +134,7 @@ class AppTheme {
         enabledBorder: inputBorder,
         disabledBorder: inputBorder,
         focusedBorder: inputBorder.copyWith(
-            borderSide: const BorderSide(color: SfColors.ink, width: 2)),
+            borderSide: const BorderSide(color: SfColors.brand, width: 2)),
         errorBorder: inputBorder.copyWith(
             borderSide: const BorderSide(color: SfColors.danger)),
         focusedErrorBorder: inputBorder.copyWith(
@@ -151,14 +151,14 @@ class AppTheme {
       ),
       chipTheme: ChipThemeData(
         backgroundColor: SfColors.surface2,
-        selectedColor: SfColors.ink,
+        selectedColor: SfColors.brand,
         disabledColor: SfColors.surface2,
         side: BorderSide.none,
         shape: pill,
         showCheckmark: false,
         labelStyle: text.labelMedium!.copyWith(
           color: WidgetStateColor.resolveWith((s) =>
-              s.contains(WidgetState.selected) ? Colors.white : SfColors.ink),
+              s.contains(WidgetState.selected) ? SfColors.onBrand : SfColors.ink),
         ),
         padding: const EdgeInsets.symmetric(
             horizontal: SfSpace.sm, vertical: SfSpace.xs),
@@ -170,21 +170,21 @@ class AppTheme {
         elevation: 0,
         height: 64,
         iconTheme: _byState(
-          const IconThemeData(color: SfColors.ink, size: 26),
+          const IconThemeData(color: SfColors.brand, size: 26),
           const IconThemeData(color: SfColors.inkFaint, size: 26),
         ),
         labelTextStyle: _byState(
-          text.labelSmall!.copyWith(color: SfColors.ink),
+          text.labelSmall!.copyWith(color: SfColors.brand),
           text.labelSmall!.copyWith(
               color: SfColors.inkFaint, fontWeight: FontWeight.w500),
         ),
       ),
       navigationRailTheme: NavigationRailThemeData(
         backgroundColor: SfColors.surface,
-        indicatorColor: SfColors.surface2,
-        selectedIconTheme: const IconThemeData(color: SfColors.ink),
+        indicatorColor: SfColors.accentSoft,
+        selectedIconTheme: const IconThemeData(color: SfColors.brand),
         unselectedIconTheme: const IconThemeData(color: SfColors.inkFaint),
-        selectedLabelTextStyle: text.labelSmall!.copyWith(color: SfColors.ink),
+        selectedLabelTextStyle: text.labelSmall!.copyWith(color: SfColors.brand),
         unselectedLabelTextStyle:
             text.labelSmall!.copyWith(color: SfColors.inkFaint),
       ),
@@ -193,7 +193,7 @@ class AppTheme {
         unselectedLabelColor: SfColors.inkFaint,
         labelStyle: text.labelMedium,
         unselectedLabelStyle: text.labelMedium,
-        indicatorColor: SfColors.ink,
+        indicatorColor: SfColors.brand,
         indicatorSize: TabBarIndicatorSize.label,
         dividerColor: SfColors.surface3,
       ),
@@ -221,18 +221,18 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: const WidgetStatePropertyAll(Colors.white),
-        trackColor: _byState(SfColors.ink, SfColors.surface3),
+        trackColor: _byState(SfColors.brand, SfColors.surface3),
         trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
       ),
       checkboxTheme: CheckboxThemeData(
-        fillColor: _byState(SfColors.ink, Colors.transparent),
+        fillColor: _byState(SfColors.brand, Colors.transparent),
         shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(4))),
       ),
       radioTheme: RadioThemeData(
-          fillColor: _byState(SfColors.ink, SfColors.inkFaint)),
+          fillColor: _byState(SfColors.brand, SfColors.inkFaint)),
       progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: SfColors.ink,
+        color: SfColors.brand,
         linearTrackColor: SfColors.surface3,
         circularTrackColor: Colors.transparent,
       ),

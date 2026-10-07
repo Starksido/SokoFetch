@@ -198,14 +198,14 @@ class _Steps extends StatelessWidget {
               Container(
                 height: 4,
                 decoration: BoxDecoration(
-                  color: i <= step ? SfColors.ink : SfColors.surface3,
+                  color: i <= step ? SfColors.brand : SfColors.surface3,
                   borderRadius: SfRadius.pillAll,
                 ),
               ),
               const SizedBox(height: SfSpace.xs),
               Text(labels[i],
                   style: text.labelSmall!.copyWith(
-                      color: i <= step ? SfColors.ink : SfColors.inkFaint)),
+                      color: i <= step ? SfColors.accentStrong : SfColors.inkFaint)),
             ]),
           ),
         ),

@@ -159,7 +159,7 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
               leading: _RoundIcon(Icons.phone_iphone_rounded),
               title: 'M-Pesa',
               subtitle: "You'll approve the payment on your phone",
-              trailing: Icon(Icons.check_circle_rounded, color: SfColors.ink),
+              trailing: Icon(Icons.check_circle_rounded, color: SfColors.brand),
             ),
             // Card stays hidden until card payments are verified server-side
             const SizedBox(height: SfSpace.sm),

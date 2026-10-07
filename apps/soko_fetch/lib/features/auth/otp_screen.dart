@@ -127,7 +127,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                     defaultPinTheme: pinTheme,
                     focusedPinTheme: pinTheme.copyDecorationWith(
                       color: SfColors.surface,
-                      border: Border.all(color: SfColors.ink, width: 2),
+                      border: Border.all(color: SfColors.brand, width: 2),
                     ),
                     errorPinTheme: pinTheme.copyDecorationWith(
                       border: Border.all(color: SfColors.danger, width: 2),

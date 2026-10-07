@@ -122,7 +122,7 @@ class _AddressTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis),
             ]),
           ),
-          if (selected) const Icon(Icons.check_rounded, color: SfColors.ink),
+          if (selected) const Icon(Icons.check_rounded, color: SfColors.brand),
         ]),
       ),
     );

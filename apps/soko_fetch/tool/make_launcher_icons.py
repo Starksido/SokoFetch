@@ -12,7 +12,7 @@ import os
 import struct
 import zlib
 
-ORANGE = (0xFF, 0x6B, 0x35)
+ORANGE = (0xF2, 0x6B, 0x1D)
 WHITE = (0xFF, 0xFF, 0xFF)
 SIZES = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
 RES = os.path.join(os.path.dirname(__file__), "..", "android", "app", "src", "main", "res")

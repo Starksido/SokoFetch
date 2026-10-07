@@ -1,24 +1,29 @@
 import 'package:flutter/material.dart';
 
-/// Design tokens. A neutral base (white surfaces, near-black ink) with Soko
-/// Fetch orange as the only accent; status colours only for status.
+/// Design tokens. Orange-led: Soko Fetch orange for main buttons, selected
+/// states and highlights; white background, warm cream panels, near-black
+/// text. Status colours only for status.
 abstract final class SfColors {
-  // Ink (text, primary buttons, selected navigation)
-  static const ink = Color(0xFF111111);
+  // Brand: main buttons, selected tabs/chips, progress, focus
+  static const brand = Color(0xFFF26B1D);
+  static const onBrand = Color(0xFFFFFFFF);
+
+  // Ink (text)
+  static const ink = Color(0xFF1A1A1A);
   static const inkMuted = Color(0xFF5E5E5E); // Secondary text
   static const inkFaint = Color(0xFF8C8C8C); // Hints, captions, disabled
 
   // Surfaces
   static const surface = Color(0xFFFFFFFF);
-  static const surface2 = Color(0xFFF3F3F3); // Inputs, chips, grey bands
-  static const surface3 = Color(0xFFE8E8E8); // Dividers, pressed, skeletons
+  static const surface2 = Color(0xFFFFF4EC); // Warm cream: inputs, chips, panels
+  static const surface3 = Color(0xFFF1E4DA); // Dividers, pressed, skeletons
   static const scrim = Color(0x66000000);
 
-  // Brand accent: fills and badges. Use [accentStrong] for orange text on
-  // white (4.5:1 contrast); [accentSoft] for tinted backgrounds.
-  static const accent = Color(0xFFFF6B35);
+  // Orange for fills and badges (= brand). Use [accentStrong] for orange
+  // text on white (4.5:1 contrast); [accentSoft] for tinted backgrounds.
+  static const accent = brand;
   static const accentStrong = Color(0xFFC2410C);
-  static const accentSoft = Color(0xFFFFEDE5);
+  static const accentSoft = Color(0xFFFFE8D9);
 
   // Status
   static const success = Color(0xFF0E8345);

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Soko Fetch orange (SfColors.accent) -->
-    <color name="ic_launcher_background">#FF6B35</color>
-    <color name="launch_background">#FF6B35</color>
+    <!-- Soko Fetch orange (SfColors.brand) -->
+    <color name="ic_launcher_background">#F26B1D</color>
+    <color name="launch_background">#F26B1D</color>
 </resources>

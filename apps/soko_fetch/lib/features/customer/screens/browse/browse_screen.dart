@@ -68,7 +68,7 @@ class BrowseScreenState extends ConsumerState<BrowseScreen> {
                     borderRadius: SfRadius.pillAll, borderSide: BorderSide.none),
                 focusedBorder: const OutlineInputBorder(
                     borderRadius: SfRadius.pillAll,
-                    borderSide: BorderSide(color: SfColors.ink, width: 2)),
+                    borderSide: BorderSide(color: SfColors.brand, width: 2)),
                 suffixIcon: searching
                     ? IconButton(
                         tooltip: 'Clear',

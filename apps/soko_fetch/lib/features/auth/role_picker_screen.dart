@@ -148,7 +148,7 @@ class _RoleCard extends StatelessWidget {
         shape: RoundedRectangleBorder(
           borderRadius: SfRadius.mdAll,
           side: BorderSide(
-              color: selected ? SfColors.ink : SfColors.surface3,
+              color: selected ? SfColors.brand : SfColors.surface3,
               width: selected ? 2 : 1),
         ),
         child: InkWell(
@@ -161,11 +161,11 @@ class _RoleCard extends StatelessWidget {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: selected ? SfColors.ink : SfColors.surface2,
+                  color: selected ? SfColors.brand : SfColors.surface2,
                   shape: BoxShape.circle,
                 ),
                 child: Icon(option.icon,
-                    color: selected ? Colors.white : SfColors.ink),
+                    color: selected ? SfColors.onBrand : SfColors.accentStrong),
               ),
               const SizedBox(width: SfSpace.md),
               Expanded(
@@ -183,7 +183,7 @@ class _RoleCard extends StatelessWidget {
                 selected
                     ? Icons.check_circle_rounded
                     : Icons.radio_button_unchecked_rounded,
-                color: selected ? SfColors.ink : SfColors.surface3,
+                color: selected ? SfColors.brand : SfColors.surface3,
               ),
             ]),
           ),
