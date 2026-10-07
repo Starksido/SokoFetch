@@ -28,6 +28,18 @@ void main() {
     });
   });
 
+  test('photo paths from the API load from the API server', () {
+    const base = 'http://127.0.0.1:8000';
+    expect(resolveMediaUrl('/media/demo/tomatoes.jpg', base: base),
+        'http://127.0.0.1:8000/media/demo/tomatoes.jpg');
+    expect(resolveMediaUrl('/media/x.jpg', base: '$base/'),
+        'http://127.0.0.1:8000/media/x.jpg');
+    expect(resolveMediaUrl('https://cdn.example.com/a.jpg', base: base),
+        'https://cdn.example.com/a.jpg');
+    expect(resolveMediaUrl(null), isNull);
+    expect(resolveMediaUrl(''), isNull);
+  });
+
   group('order status pill', () {
     test('every status has a friendly label', () {
       expect(orderStatusStyle('in_transit'), ('On the way', PillTone.accent));

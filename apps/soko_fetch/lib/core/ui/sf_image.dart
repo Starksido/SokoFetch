@@ -1,8 +1,18 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../config.dart';
 import '../design/tokens.dart';
 import 'states.dart';
+
+/// The API returns photos it hosts as paths ("/media/demo/tomatoes.jpg");
+/// those load from the API server. Full URLs are used as they are.
+String? resolveMediaUrl(String? url, {String base = AppConfig.apiBaseUrl}) {
+  if (url == null || url.isEmpty) return null;
+  if (!url.startsWith('/')) return url;
+  final trimmed = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+  return '$trimmed$url';
+}
 
 /// A network photo with a shimmer while loading and a generated fallback
 /// (soft tinted background with an icon or initials) when there is no photo.
@@ -32,15 +42,15 @@ class SfNetworkImage extends StatelessWidget {
   Widget build(BuildContext context) {
     final fallback = ImageFallback(
         icon: fallbackIcon, label: fallbackLabel, width: width, height: height);
-    final hasUrl = url != null && url!.isNotEmpty;
+    final resolved = resolveMediaUrl(url);
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: SizedBox(
         width: width,
         height: height,
-        child: hasUrl
+        child: resolved != null
             ? CachedNetworkImage(
-                imageUrl: url!,
+                imageUrl: resolved,
                 fit: fit,
                 placeholder: (_, __) =>
                     Skeleton(width: width, height: height ?? 120, radius: 0),

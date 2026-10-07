@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.middleware import security_middleware
@@ -66,6 +67,9 @@ app.include_router(courier_router,  prefix="/courier",  tags=["Courier"])
 app.include_router(customer_router, prefix="/customer", tags=["Customer"])
 app.include_router(admin_auth_router, prefix="/admin/auth", tags=["Admin login"])
 app.include_router(admin_router,    prefix="/admin",    tags=["Admin"])
+
+# ── Public images (shop and menu photos) ──────────────────────────────────────
+app.mount("/media", StaticFiles(directory=settings.MEDIA_DIR), name="media")
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

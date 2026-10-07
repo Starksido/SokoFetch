@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     DOCUMENT_STORAGE: Optional[Literal["s3", "local"]] = None
     LOCAL_DOCUMENTS_DIR: str = str(Path(__file__).resolve().parents[2] / "local_documents")
 
+    # ── Public images (shop and menu photos) ──────────────────────────────────
+    # Served at /media; the API returns paths like "/media/demo/tomatoes.jpg".
+    MEDIA_DIR: str = str(Path(__file__).resolve().parents[2] / "media")
+
     # ── Google Maps ───────────────────────────────────────────────────────────
     GOOGLE_MAPS_API_KEY: str = ""
 
