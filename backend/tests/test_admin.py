@@ -183,3 +183,35 @@ class TestCourierDocument:
         from app.core.exceptions import NotFoundError
         with pytest.raises(NotFoundError):
             await service.get_courier_document(str(uuid4()), "selfie_with_id", self._db_with_doc(None))
+
+
+# ── Serialising real rows (regression) ───────────────────────────────────────
+def test_rider_with_documents_serialises():
+    # Document ids are UUIDs on the ORM row; the schema declared str with no
+    # conversion, so GET /admin/couriers and GET /courier/me returned 500 for
+    # any rider who had uploaded a document.
+    from datetime import datetime, timezone
+    from decimal import Decimal
+    from uuid import uuid4
+    from app.models.courier import (
+        Courier, CourierDocument, CourierStatus, DocumentType, VehicleType,
+    )
+    from app.schemas.admin import AdminCourier
+
+    now = datetime.now(timezone.utc)
+    courier = Courier(
+        id=uuid4(), user_id=uuid4(), full_name="Juma", vehicle_type=VehicleType.motorcycle,
+        vehicle_plate="KMDA 123A", status=CourierStatus.documents_submitted,
+        is_online=False, rating=Decimal("5"), rating_count=0, total_deliveries=0,
+        total_earned=Decimal("0"), pending_payout=Decimal("0"),
+        documents_verified_at=None, created_at=now,
+    )
+    courier.documents = [CourierDocument(
+        id=uuid4(), doc_type=DocumentType.national_id_front, s3_key="k",
+        is_verified=False, verified_at=None, uploaded_at=now,
+    )]
+
+    data = AdminCourier.model_validate(courier).model_dump(mode="json")
+    assert data["documents"][0]["id"] == str(courier.documents[0].id)
+    assert data["documents"][0]["doc_type"] == "national_id_front"
+    assert data["status"] == "documents_submitted"

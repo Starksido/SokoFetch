@@ -21,6 +21,12 @@ class CourierProfileUpdate(BaseModel):
 
 class CourierDocumentResponse(BaseModel):
     id:          str
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _stringify_uuid(cls, v):
+        return str(v) if v is not None else v
+
     doc_type:    str
     is_verified: bool
     verified_at: Optional[datetime]
