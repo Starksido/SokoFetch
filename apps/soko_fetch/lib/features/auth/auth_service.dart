@@ -65,9 +65,8 @@ class AuthService {
   static String homeRoute(String role) => '/$role';
 
   /// The role's home, or its onboarding if this account has no profile yet
-  /// (GET /{role}/me returns 404). Admins have no profile.
+  /// (GET /{role}/me returns 404).
   Future<String> landingRoute(String role) async {
-    if (!kSignupRoles.contains(role)) return homeRoute(role);
     try {
       await _api.get('/$role/me');
       return homeRoute(role);

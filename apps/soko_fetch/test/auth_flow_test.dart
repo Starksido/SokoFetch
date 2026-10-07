@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:soko_fetch/core/api_client.dart';
+import 'package:soko_fetch/core/session.dart';
 import 'package:soko_fetch/features/auth/role_picker_screen.dart';
 import 'package:soko_fetch/features/auth/splash_screen.dart';
 
@@ -55,13 +56,25 @@ void main() {
       expect(find.text('route:/courier/onboarding'), findsOneWidget);
     });
 
-    testWidgets('admin goes to the admin area without a profile check',
-        (tester) async {
+    testWidgets('an old admin session is logged out', (tester) async {
+      // Admins use the separate admin panel now
       FlutterSecureStorage.setMockInitialValues(storedSession(role: 'admin'));
-      final adapter = _serve((o) => jsonBody(500, null));
-      await pumpSplash(tester);
-      expect(find.text('route:/admin'), findsOneWidget);
-      expect(adapter.requests, isEmpty);
+      _serve((o) => jsonBody(200, {'message': 'Logged out successfully'}));
+      final before = sessionGeneration.value;
+      await tester.pumpWidget(MaterialApp(
+        onGenerateRoute: _routeName,
+        onGenerateInitialRoutes: (_) => [
+          MaterialPageRoute(
+              builder: (_) => const SplashScreen(delay: Duration.zero)),
+        ],
+      ));
+      // The spinner never settles here: in the app, SessionScope rebuilds
+      // everything when the generation changes
+      for (var i = 0; i < 20 && sessionGeneration.value == before; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      expect(sessionGeneration.value, before + 1);
+      expect(await ApiClient.instance.store.refreshToken, isNull);
     });
 
     testWidgets('customer without a device lock opens the customer home',

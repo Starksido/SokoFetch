@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'core/theme.dart';
-import 'features/admin/routes.dart';
 import 'features/auth/otp_screen.dart';
 import 'features/auth/role_picker_screen.dart';
 import 'features/auth/splash_screen.dart';
@@ -23,8 +22,8 @@ class SokoFetchApp extends StatelessWidget {
       );
 }
 
-/// Each role owns the routes under its prefix: /customer, /merchant,
-/// /courier and /admin.
+/// Each role owns the routes under its prefix: /customer, /merchant and
+/// /courier. Admins use the separate admin web panel (apps/soko_fetch_admin).
 Route<dynamic> onGenerateRoute(RouteSettings s) {
   final name = s.name ?? '/';
   Widget? page = switch (name) {
@@ -39,8 +38,7 @@ Route<dynamic> onGenerateRoute(RouteSettings s) {
 
   final route = _under(name, '/customer', s, customerRoute) ??
       _under(name, '/merchant', s, merchantRoute) ??
-      _under(name, '/courier', s, courierRoute) ??
-      _under(name, '/admin', s, adminRoute);
+      _under(name, '/courier', s, courierRoute);
   return route ??
       MaterialPageRoute(builder: (_) => const SplashScreen(), settings: s);
 }

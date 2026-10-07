@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/models.dart';
 import '../../core/session.dart';
 import '../../core/theme.dart';
 import 'auth_service.dart';
@@ -37,7 +38,9 @@ class _SplashScreenState extends State<SplashScreen>
     if (!await Session.hasSession) return _go('/welcome');
 
     _role = await Session.role;
-    if (_role == null) return Session.logout();
+    // Anything else (e.g. an admin session from before the admin panel was
+    // split out) can't be used here
+    if (!kSignupRoles.contains(_role)) return Session.logout();
 
     if (_role == 'customer' && await AuthService.instance.canUseDeviceLock()) {
       return _unlock();
