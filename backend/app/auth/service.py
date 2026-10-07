@@ -137,13 +137,23 @@ async def verify_and_authenticate(
 
 
 # ── Sign up: create the account once a role is picked ─────────────────────────
+async def _take(key: str, redis: aioredis.Redis) -> str | None:
+    """
+    Read a key and delete it atomically, so it can only be used once.
+    GET + DEL in one MULTI/EXEC rather than GETDEL, which needs Redis 6.2+.
+    """
+    async with redis.pipeline(transaction=True) as pipe:
+        raw, _ = await pipe.get(key).delete(key).execute()
+    return raw
+
+
 async def complete_signup(
     signup_token: str,
     role: str,
     db: AsyncSession,
     redis: aioredis.Redis,
 ) -> TokenResponse:
-    raw = await redis.getdel(f"signup:{signup_token}")   # Single use
+    raw = await _take(f"signup:{signup_token}", redis)   # Single use
     if not raw:
         raise SokoFetchException(
             400, "INVALID_SIGNUP_TOKEN",

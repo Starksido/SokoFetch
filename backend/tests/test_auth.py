@@ -45,11 +45,30 @@ def mock_redis():
         store[key] = value
         return True
 
-    async def getdel(key):
-        return store.pop(key, None)
+    class Pipeline:
+        """MULTI/EXEC: queue commands, run them together on execute()."""
+        def __init__(self):
+            self.ops = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def get(self, key):
+            self.ops.append(lambda: store.get(key))
+            return self
+
+        def delete(self, *keys):
+            self.ops.append(lambda: sum(store.pop(k, None) is not None for k in keys))
+            return self
+
+        async def execute(self):
+            return [op() for op in self.ops]
 
     redis.set = set_
-    redis.getdel = getdel
+    redis.pipeline = lambda transaction=True: Pipeline()
     redis.get = get
     redis.setex = setex
     redis.delete = delete
