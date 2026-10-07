@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/theme.dart';
+import '../../core/ui/ui.dart';
 import 'providers/providers.dart';
 import 'screens/delivery/proof_screen.dart';
 import 'screens/dispatch/home_screen.dart';
@@ -45,40 +45,42 @@ class _CourierShellState extends ConsumerState<CourierShell> {
 
     return Scaffold(
       body: IndexedStack(index: _index, children: _screens),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        backgroundColor: Colors.white,
-        indicatorColor: AppTheme.accent.withValues(alpha: 0.12),
-        destinations: [
-          NavigationDestination(
-            icon: Stack(children: [
-              const Icon(Icons.delivery_dining_outlined),
-              if (isOnline)
-                Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                            color: AppTheme.teal, shape: BoxShape.circle))),
-            ]),
-            selectedIcon: const Icon(Icons.delivery_dining),
-            label: 'Deliver',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart),
-            label: 'Earnings',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
-      ),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Divider(),
+        NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: (i) => setState(() => _index = i),
+          destinations: [
+            NavigationDestination(
+              icon: Stack(children: [
+                const Icon(Icons.delivery_dining_outlined),
+                if (isOnline)
+                  Positioned(
+                      right: 0,
+                      top: 0,
+                      child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                              color: SfColors.success,
+                              shape: BoxShape.circle))),
+              ]),
+              selectedIcon: const Icon(Icons.delivery_dining),
+              label: 'Deliver',
+            ),
+            const NavigationDestination(
+              icon: Icon(Icons.bar_chart_outlined),
+              selectedIcon: Icon(Icons.bar_chart),
+              label: 'Earnings',
+            ),
+            const NavigationDestination(
+              icon: Icon(Icons.person_outline),
+              selectedIcon: Icon(Icons.person),
+              label: 'Profile',
+            ),
+          ],
+        ),
+      ]),
     );
   }
 }

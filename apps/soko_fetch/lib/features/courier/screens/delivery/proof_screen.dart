@@ -2,10 +2,11 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import '../../../../core/theme.dart';
+import 'package:pinput/pinput.dart';
+
+import '../../../../core/ui/ui.dart';
 import '../../models/models.dart';
 import '../../../../core/api_client.dart';
 import '../../providers/providers.dart';
@@ -65,10 +66,7 @@ class _ProofScreenState extends ConsumerState<ProofOfDeliveryScreen> {
       if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(context, '/courier', (_) => false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Delivery confirmed! 🎉'),
-          backgroundColor: AppTheme.teal,
-        ),
+        const SnackBar(content: Text('Delivery confirmed. Nice work!')),
       );
     } on DioException catch (e) {
       if (mounted) setState(() => _error = _messageFrom(e));
@@ -90,117 +88,86 @@ class _ProofScreenState extends ConsumerState<ProofOfDeliveryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final pinTheme = PinTheme(
+      width: 56,
+      height: 64,
+      textStyle: text.headlineMedium,
+      decoration: const BoxDecoration(
+          color: SfColors.surface2, borderRadius: SfRadius.mdAll),
+    );
     return Scaffold(
-      appBar: AppBar(title: const Text('Confirm Delivery')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          // Order summary
-          Card(child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Order Summary',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-              const SizedBox(height: 8),
-              Text(_order.deliveryAddress,
-                  style: const TextStyle(color: AppTheme.mgray, fontSize: 13)),
-              const SizedBox(height: 4),
-              Text('Payout: KES ${_order.courierPayout.toStringAsFixed(0)}',
-                  style: const TextStyle(
-                      color: AppTheme.teal, fontWeight: FontWeight.bold)),
-            ]),
-          )),
-          const SizedBox(height: 20),
-
-          // Delivery code (required)
-          const Text('Delivery Code',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-          const SizedBox(height: 6),
-          const Text(
-              'Ask the customer for the 4-digit code shown in their app.',
-              style: TextStyle(color: AppTheme.mgray, fontSize: 13)),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _codeCtrl,
-            keyboardType: TextInputType.number,
-            textAlign: TextAlign.center,
-            maxLength: 4,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            style: const TextStyle(
-                fontSize: 28, fontWeight: FontWeight.bold,
-                letterSpacing: 12),
-            decoration: const InputDecoration(
-              hintText: '• • • •',
-              counterText: '',
-              hintStyle: TextStyle(letterSpacing: 12, color: AppTheme.mgray),
-            ),
+      appBar: AppBar(title: const Text('Confirm delivery')),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(SfSpace.md, SfSpace.xs, SfSpace.md, 0),
+            child: InlineMessage(_error!),
           ),
-          const SizedBox(height: 24),
-
-          // Photo (optional)
-          const Text('Photo (optional)',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-          const SizedBox(height: 10),
-          GestureDetector(
-            onTap: _pickPhoto,
-            child: Container(
-              height: 160,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                    color: _photoPath != null
-                        ? AppTheme.teal
-                        : Colors.grey.shade200,
-                    width: 2),
+        BottomCtaBar(
+            label: 'Confirm Delivery', loading: _submitting, onPressed: _submit),
+      ]),
+      body: MaxWidth(
+        maxWidth: 520,
+        child: ListView(
+          padding: const EdgeInsets.all(SfSpace.md),
+          children: [
+            ListRow(
+              leading: const Icon(Icons.place_outlined),
+              title: _order.deliveryAddress,
+              subtitle: 'You earn ${formatKes(_order.courierPayout)}',
+            ),
+            const SizedBox(height: SfSpace.lg),
+            Text('Delivery code', style: text.titleLarge),
+            const SizedBox(height: SfSpace.xxs),
+            Text('Ask the customer for the 4-digit code in their app.',
+                style: text.bodyMedium),
+            const SizedBox(height: SfSpace.md),
+            Center(
+              child: Pinput(
+                controller: _codeCtrl,
+                length: 4,
+                autofocus: true,
+                defaultPinTheme: pinTheme,
+                focusedPinTheme: pinTheme.copyDecorationWith(
+                  color: SfColors.surface,
+                  border: Border.all(color: SfColors.brand, width: 2),
+                ),
               ),
-              child: _photoPath != null
-                  ? ClipRRect(
-                      borderRadius: BorderRadius.circular(13),
-                      child: Image.file(File(_photoPath!), fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Center(
-                              child: Icon(Icons.check_circle,
-                                  color: AppTheme.teal, size: 48))))
-                  : const Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.camera_alt_outlined,
-                            size: 40, color: AppTheme.mgray),
-                        SizedBox(height: 8),
-                        Text('Tap to add a delivery photo',
-                            style: TextStyle(color: AppTheme.mgray)),
-                      ],
-                    ),
             ),
-          ),
-
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                  color: AppTheme.accent.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Text(_error!,
-                  style: const TextStyle(color: AppTheme.accent, fontSize: 13)),
+            const SizedBox(height: SfSpace.xl),
+            Text('Photo (optional)', style: text.titleLarge),
+            const SizedBox(height: SfSpace.sm),
+            InkWell(
+              onTap: _pickPhoto,
+              borderRadius: SfRadius.mdAll,
+              child: Container(
+                height: 180,
+                decoration: const BoxDecoration(
+                    color: SfColors.surface2, borderRadius: SfRadius.mdAll),
+                child: _photoPath != null
+                    ? ClipRRect(
+                        borderRadius: SfRadius.mdAll,
+                        child: Image.file(File(_photoPath!),
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            errorBuilder: (_, __, ___) => const Center(
+                                child: Icon(Icons.check_circle,
+                                    color: SfColors.success, size: 48))))
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.photo_camera_outlined,
+                              size: 36, color: SfColors.accentStrong),
+                          const SizedBox(height: SfSpace.xs),
+                          Text('Take a photo of the handover',
+                              style: text.bodyMedium),
+                        ],
+                      ),
+              ),
             ),
           ],
-
-          const SizedBox(height: 28),
-          ElevatedButton(
-            onPressed: _submitting ? null : _submit,
-            style: ElevatedButton.styleFrom(
-                minimumSize: const Size.fromHeight(54),
-                backgroundColor: AppTheme.teal),
-            child: _submitting
-                ? const SizedBox(width: 22, height: 22,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2.5))
-                : const Text('Confirm Delivery',
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 16)),
-          ),
-        ],
+        ),
       ),
     );
   }

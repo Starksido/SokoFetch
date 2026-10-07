@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme.dart';
+import '../../../../core/ui/ui.dart';
 import '../../../../core/api_client.dart';
 import '../../providers/providers.dart';
 
@@ -72,62 +72,68 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Become a rider')),
+      bottomNavigationBar: BottomCtaBar(
+          label: 'Continue', loading: _saving, onPressed: _submit),
       body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              const Text(
-                'Tell us about yourself. After this you will upload your '
-                'documents for review.',
-                style: TextStyle(color: AppTheme.mgray),
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _fullName,
-                decoration: const InputDecoration(labelText: 'Full name (as on your ID)'),
-                textCapitalization: TextCapitalization.words,
-                validator: (v) => (v == null || v.trim().length < 2)
-                    ? 'Enter your full name' : null,
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _vehicle,
-                decoration: const InputDecoration(labelText: 'How will you deliver?'),
-                items: [
-                  for (final e in _vehicles.entries)
-                    DropdownMenuItem(value: e.key, child: Text(e.value)),
-                ],
-                onChanged: (v) => setState(() => _vehicle = v ?? _vehicle),
-              ),
-              if (_vehicle == 'motorcycle') ...[
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _plate,
-                  decoration: const InputDecoration(labelText: 'Number plate'),
-                  textCapitalization: TextCapitalization.characters,
-                  validator: (v) => (v == null || v.trim().isEmpty)
-                      ? 'Enter your number plate'
-                      : (v.trim().length > 20 ? 'Too long' : null),
+        child: MaxWidth(
+          maxWidth: 520,
+          child: Form(
+            key: _formKey,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(
+                  SfSpace.lg, SfSpace.xl, SfSpace.lg, SfSpace.lg),
+              children: [
+                Text('Become a rider', style: text.headlineMedium),
+                const SizedBox(height: SfSpace.xs),
+                Text(
+                  'Tell us about yourself. Next you will upload your documents for review.',
+                  style: text.bodyLarge!.copyWith(color: SfColors.inkMuted),
                 ),
+                const SizedBox(height: SfSpace.xl),
+                TextFormField(
+                  controller: _fullName,
+                  decoration: const InputDecoration(
+                    labelText: 'Full name (as on your ID)',
+                    prefixIcon: Icon(Icons.person_outline_rounded),
+                  ),
+                  textCapitalization: TextCapitalization.words,
+                  validator: (v) => (v == null || v.trim().length < 2)
+                      ? 'Enter your full name'
+                      : null,
+                ),
+                const SizedBox(height: SfSpace.lg),
+                Text('How will you deliver?', style: text.titleSmall),
+                const SizedBox(height: SfSpace.xs),
+                Wrap(spacing: SfSpace.xs, children: [
+                  for (final e in _vehicles.entries)
+                    ChoiceChip(
+                      label: Text(e.value),
+                      selected: _vehicle == e.key,
+                      onSelected: (_) => setState(() => _vehicle = e.key),
+                    ),
+                ]),
+                if (_vehicle == 'motorcycle') ...[
+                  const SizedBox(height: SfSpace.lg),
+                  TextFormField(
+                    controller: _plate,
+                    decoration: const InputDecoration(
+                      labelText: 'Number plate',
+                      prefixIcon: Icon(Icons.two_wheeler_outlined),
+                    ),
+                    textCapitalization: TextCapitalization.characters,
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? 'Enter your number plate'
+                        : (v.trim().length > 20 ? 'Too long' : null),
+                  ),
+                ],
+                if (_error != null) ...[
+                  const SizedBox(height: SfSpace.md),
+                  InlineMessage(_error!),
+                ],
               ],
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: const TextStyle(color: AppTheme.accent)),
-              ],
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _saving ? null : _submit,
-                child: _saving
-                    ? const SizedBox(
-                        height: 20, width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Continue'),
-              ),
-            ],
+            ),
           ),
         ),
       ),
