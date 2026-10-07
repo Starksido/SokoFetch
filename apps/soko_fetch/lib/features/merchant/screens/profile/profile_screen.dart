@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/session.dart';
 import '../../../../core/ui/ui.dart';
 import '../../providers/providers.dart';
+import '../onboarding/onboarding_screen.dart' show kMerchantCategories;
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -91,7 +92,8 @@ class ProfileScreen extends ConsumerWidget {
               ListRow(
                 leading: const Icon(Icons.category_outlined),
                 title: 'Category',
-                subtitle: p.category.replaceAll('_', ' '),
+                subtitle: kMerchantCategories[p.category] ??
+                    p.category.replaceAll('_', ' '),
               ),
               ListRow(
                 leading: const Icon(Icons.percent_rounded),

@@ -227,7 +227,12 @@ class StatTile extends StatelessWidget {
           Icon(icon, size: 20, color: SfColors.inkMuted),
           const SizedBox(height: SfSpace.xs),
         ],
-        Text(value, style: text.titleLarge, maxLines: 1),
+        // Shrink long figures ("KES 12,345.50") to fit narrow tiles
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(value, style: text.titleLarge, maxLines: 1),
+        ),
         const SizedBox(height: 2),
         Text(label, style: text.bodySmall),
       ]),

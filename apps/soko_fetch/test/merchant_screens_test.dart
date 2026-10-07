@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -125,6 +126,22 @@ void main() {
     expect(find.byType(NavigationBar), findsNothing);
     // The first new order is open on the right
     expect(find.text('Accept'), findsOneWidget);
+  });
+
+  testWidgets('shop tab names the category', (tester) async {
+    await pumpAt(tester, const ProfileScreen(), const Size(360, 800),
+        overrides: _overrides());
+    expect(find.text('Grocery'), findsOneWidget);
+  });
+
+  testWidgets("dashboard shows today's takings in full on a small phone",
+      (tester) async {
+    await pumpAt(tester, const DashboardScreen(), const Size(360, 800),
+        overrides: _overrides());
+    final takings = find.text('KES 4,380');
+    expect(takings, findsOneWidget);
+    expect(tester.renderObject<RenderParagraph>(takings).didExceedMaxLines,
+        isFalse);
   });
 
   group('merchant screens lay out at every size', () {

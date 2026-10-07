@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:soko_fetch/core/theme.dart';
@@ -62,6 +63,22 @@ void main() {
       expect(tester.getCenter(f).dx, closeTo(size.width / 2, 1));
     }
     await tester.pumpAndSettle(const Duration(seconds: 2)); // Let it move on
+  });
+
+  testWidgets('a stat tile shrinks a long amount instead of cutting it off',
+      (tester) async {
+    await pumpAt(
+        tester,
+        const Scaffold(
+          body: Center(
+            child: SizedBox(
+                width: 100, // a third of a small phone, as on rider Profile
+                child: StatTile(label: 'Earned', value: 'KES 87.94')),
+          ),
+        ),
+        const Size(360, 800));
+    final value = tester.renderObject<RenderParagraph>(find.text('KES 87.94'));
+    expect(value.didExceedMaxLines, isFalse);
   });
 
   testWidgets('bottom bar shows count, label and price, and can be disabled',

@@ -5,6 +5,18 @@ import '../../../../core/api_client.dart';
 
 /// Shown after login when the account has no shop yet (GET /merchant/me → 404).
 /// Creates the shop via POST /merchant/onboard; it starts in pending review.
+/// Shop categories as merchants see them. Keys must match MerchantCategory
+/// on the backend.
+const kMerchantCategories = {
+  'restaurant': 'Restaurant',
+  'fast_food':  'Fast food',
+  'grocery':    'Grocery',
+  'bakery':     'Bakery',
+  'beverages':  'Beverages',
+  'pharmacy':   'Pharmacy',
+  'general':    'General store',
+};
+
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
   @override
@@ -12,17 +24,6 @@ class OnboardingScreen extends StatefulWidget {
 }
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
-  // Must match MerchantCategory on the backend
-  static const _categories = {
-    'restaurant': 'Restaurant',
-    'fast_food':  'Fast food',
-    'grocery':    'Grocery',
-    'bakery':     'Bakery',
-    'beverages':  'Beverages',
-    'pharmacy':   'Pharmacy',
-    'general':    'General store',
-  };
-
   final _formKey     = GlobalKey<FormState>();
   final _shopName    = TextEditingController();
   final _description = TextEditingController();
@@ -113,7 +114,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 Text('What do you sell?', style: text.titleSmall),
                 const SizedBox(height: SfSpace.xs),
                 Wrap(spacing: SfSpace.xs, runSpacing: SfSpace.xs, children: [
-                  for (final e in _categories.entries)
+                  for (final e in kMerchantCategories.entries)
                     ChoiceChip(
                       label: Text(e.value),
                       selected: _category == e.key,
