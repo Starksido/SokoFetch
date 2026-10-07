@@ -570,3 +570,107 @@ class TestSignupFlow:
         from app.auth.otp import generate_otp, verify_otp
         code = await generate_otp(self.PHONE, redis)
         assert await verify_otp(self.PHONE, code, redis) is True
+
+
+# ── Admin panel login is separate from the public app ────────────────────────
+def _admin(is_active=True):
+    from datetime import datetime, timezone
+    user = _user("admin", is_active)
+    user.email = None
+    user.created_at = datetime.now(timezone.utc)
+    return user
+
+
+class TestAdminLoginSeparation:
+    PHONE = "+254746396717"
+
+    async def test_public_otp_login_refuses_admins(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.service import verify_and_authenticate
+        from app.core.exceptions import UseAdminPanelError
+        with patch("app.auth.service.verify_otp", new_callable=AsyncMock):
+            with pytest.raises(UseAdminPanelError):
+                await verify_and_authenticate(self.PHONE, "123456", None, _db_returning(_admin()), redis)
+
+    async def test_admin_code_only_sent_to_admins(self, mock_redis):
+        redis, store = mock_redis
+        from app.auth.service import request_admin_otp
+        with patch("app.auth.service.send_otp_sms", new_callable=AsyncMock) as sms:
+            not_admin = await request_admin_otp(self.PHONE, _db_returning(_user("merchant")), redis)
+            nobody = await request_admin_otp(self.PHONE, _db_returning(None), redis)
+            sms.assert_not_awaited()
+            admin = await request_admin_otp(self.PHONE, _db_returning(_admin()), redis)
+            sms.assert_awaited_once()
+        # Same answer either way, so admin numbers can't be discovered
+        assert not_admin == nobody == admin
+        assert any(k.startswith("admin_otp:") for k in store)
+        assert not any(k.startswith("otp:") for k in store)
+
+    async def test_admin_login_issues_admin_panel_tokens(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.jwt import decode_token
+        from app.auth.service import request_admin_otp, verify_admin_otp
+        db = _db_returning(_admin())
+        with patch("app.auth.service.send_otp_sms", new_callable=AsyncMock) as sms:
+            await request_admin_otp(self.PHONE, db, redis)
+        code = sms.await_args.args[1]
+        tokens = await verify_admin_otp(self.PHONE, code, db, redis)
+        payload = await decode_token(tokens.access_token, redis, "access")
+        assert payload["client"] == "admin"
+        assert payload["role"] == "admin"
+
+    async def test_public_code_does_not_work_on_admin_login(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.otp import generate_otp
+        from app.auth.service import verify_admin_otp
+        from app.core.exceptions import InvalidOTPError
+        code = await generate_otp(self.PHONE, redis)          # Public-app code
+        with pytest.raises(InvalidOTPError):
+            await verify_admin_otp(self.PHONE, code, _db_returning(_admin()), redis)
+
+    async def test_admin_login_refuses_non_admins(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.otp import generate_otp
+        from app.auth.service import verify_admin_otp
+        from app.core.exceptions import InvalidOTPError
+        code = await generate_otp(self.PHONE, redis, scope="admin_otp")
+        with pytest.raises(InvalidOTPError):
+            await verify_admin_otp(self.PHONE, code, _db_returning(_user("courier")), redis)
+
+    async def test_refresh_stays_with_its_own_client(self, mock_redis):
+        redis, _ = mock_redis
+        from app.auth.jwt import create_refresh_token
+        from app.auth.service import refresh_access_token
+        from app.core.exceptions import InvalidTokenError
+        admin = _admin()
+        db = _db_with_user(admin)
+        panel_token = create_refresh_token(str(admin.id), "admin", "admin")
+        with pytest.raises(InvalidTokenError):
+            await refresh_access_token(panel_token, db, redis)            # Public refresh
+        # Rejected before being claimed, so it still works where it belongs
+        tokens = await refresh_access_token(panel_token, db, redis, client="admin")
+        assert tokens["refresh_token"] != panel_token
+
+    async def test_old_admin_session_on_the_phone_is_ended(self, mock_redis):
+        # An admin logged in to the phone app before the split: its refresh
+        # token has no client claim and must not keep working there
+        redis, _ = mock_redis
+        from jose import jwt
+        from app.auth.jwt import create_refresh_token
+        from app.auth.service import refresh_access_token
+        from app.core.config import settings
+        from app.core.exceptions import UseAdminPanelError
+        admin = _admin()
+        payload = jwt.decode(create_refresh_token(str(admin.id), "admin"),
+                             settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        payload.pop("client")
+        legacy = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
+        with pytest.raises(UseAdminPanelError):
+            await refresh_access_token(legacy, _db_with_user(admin), redis)
+
+    async def test_admin_login_routes_registered(self):
+        from app.main import app
+        paths = app.openapi()["paths"]
+        for path in ("/admin/auth/otp/request", "/admin/auth/otp/verify",
+                     "/admin/auth/token/refresh", "/admin/auth/logout"):
+            assert "post" in paths[path]

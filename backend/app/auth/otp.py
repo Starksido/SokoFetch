@@ -32,14 +32,16 @@ def _phone_hash(phone: str) -> str:
     """SHA-256 hash of phone — never store raw phone in Redis keys."""
     return hashlib.sha256(phone.encode()).hexdigest()[:32]
 
-def _otp_key(phone: str) -> str:
-    return f"otp:{_phone_hash(phone)}"
+# scope "otp" for the public app, "admin_otp" for the admin panel: a code
+# requested in one can never be used in the other
+def _otp_key(phone: str, scope: str = "otp") -> str:
+    return f"{scope}:{_phone_hash(phone)}"
 
 def _rate_key(phone: str) -> str:
     return f"otp_rate:{_phone_hash(phone)}"
 
-def _fail_key(phone: str) -> str:
-    return f"otp_fail:{_phone_hash(phone)}"
+def _fail_key(phone: str, scope: str = "otp") -> str:
+    return f"{scope}_fail:{_phone_hash(phone)}"
 
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
@@ -62,7 +64,7 @@ async def check_rate_limit(phone: str, redis: aioredis.Redis) -> None:
 
 
 # ── OTP generation ────────────────────────────────────────────────────────────
-async def generate_otp(phone: str, redis: aioredis.Redis) -> str:
+async def generate_otp(phone: str, redis: aioredis.Redis, scope: str = "otp") -> str:
     """
     Generate a 6-digit TOTP code, store secret+code in Redis with TTL.
     Returns the plaintext OTP code (to be sent via SMS).
@@ -71,24 +73,24 @@ async def generate_otp(phone: str, redis: aioredis.Redis) -> str:
     totp = pyotp.TOTP(secret, interval=settings.OTP_EXPIRE_SECONDS)
     code = totp.now()
 
-    key = _otp_key(phone)
+    key = _otp_key(phone, scope)
     # Store as "secret:code" — single-use
     await redis.setex(key, settings.OTP_EXPIRE_SECONDS, f"{secret}:{code}")
     # Fresh code → fresh wrong-guess budget
-    await redis.delete(_fail_key(phone))
+    await redis.delete(_fail_key(phone, scope))
 
     logger.info("OTP generated | phone_hash=%s", _phone_hash(phone))
     return code
 
 
 # ── OTP verification ──────────────────────────────────────────────────────────
-async def verify_otp(phone: str, code: str, redis: aioredis.Redis) -> bool:
+async def verify_otp(phone: str, code: str, redis: aioredis.Redis, scope: str = "otp") -> bool:
     """
     Verify OTP code. Deletes it on success (single-use).
     Raises InvalidOTPError on failure. After OTP_MAX_VERIFY_ATTEMPTS wrong
     guesses the code is burned (RateLimitError) and a new one must be requested.
     """
-    key = _otp_key(phone)
+    key = _otp_key(phone, scope)
     entry = await redis.get(key)
 
     if not entry:
@@ -100,7 +102,7 @@ async def verify_otp(phone: str, code: str, redis: aioredis.Redis) -> bool:
     # Constant-time comparison — prevents timing attacks
     if not secrets.compare_digest(stored_code, code.strip()):
         logger.warning("OTP mismatch | phone_hash=%s", _phone_hash(phone))
-        fail_key = _fail_key(phone)
+        fail_key = _fail_key(phone, scope)
         fails = await redis.incr(fail_key)
         if fails == 1:
             await redis.expire(fail_key, settings.OTP_EXPIRE_SECONDS)
@@ -112,7 +114,7 @@ async def verify_otp(phone: str, code: str, redis: aioredis.Redis) -> bool:
         raise InvalidOTPError()
 
     # Invalidate immediately — single use
-    await redis.delete(key, _fail_key(phone))
+    await redis.delete(key, _fail_key(phone, scope))
 
     # Also clear the rate limit counter on success
     await redis.delete(_rate_key(phone))

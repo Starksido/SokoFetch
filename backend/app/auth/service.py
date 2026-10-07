@@ -13,13 +13,13 @@ from app.models.user import User, UserRole
 from app.auth.otp import generate_otp, verify_otp, check_rate_limit, validate_phone
 from app.auth.sms import send_otp_sms
 from app.auth.jwt import (
-    create_token_pair, decode_token, revoke_token,
-    claim_refresh_token, revoke_all_user_tokens,
+    CLIENT_ADMIN, CLIENT_APP, create_token_pair, decode_token, revoke_token,
+    claim_refresh_token, revoke_all_user_tokens, token_client,
 )
 from app.schemas.auth import UserProfile, TokenResponse, SignupRequiredResponse
 from app.core.exceptions import (
     AccountDisabledError, AlreadyExistsError, InsufficientRoleError,
-    InvalidTokenError, RevokedTokenError,
+    InvalidOTPError, InvalidTokenError, RevokedTokenError, UseAdminPanelError,
 )
 
 from app.core.config import settings
@@ -55,6 +55,9 @@ SIGNUP_TOKEN_TTL = 600   # seconds the user has to pick a role
 
 
 def _check_can_log_in(user: User, requested_role: str | None) -> None:
+    if user.role == UserRole.admin:
+        # Admins log in through /admin/auth on the admin panel only
+        raise UseAdminPanelError()
     if requested_role is not None and user.role.value != requested_role:
         # A courier trying to log in as a customer, etc. — reject
         raise InsufficientRoleError(requested_role)
@@ -87,6 +90,7 @@ async def _create_user(db: AsyncSession, **fields) -> User:
 
 async def _token_response(
     user: User, is_new: bool, db: AsyncSession, phone: str | None = None,
+    client: str = CLIENT_APP,
 ) -> TokenResponse:
     user.last_login = datetime.now(timezone.utc)
     await db.flush()
@@ -101,7 +105,7 @@ async def _token_response(
         is_new=is_new,
         created_at=user.created_at.isoformat(),
     )
-    return TokenResponse(**create_token_pair(user_id, role), expires_in=1800, user=profile)
+    return TokenResponse(**create_token_pair(user_id, role, client), expires_in=1800, user=profile)
 
 
 # ── Verify OTP & issue tokens ─────────────────────────────────────────────────
@@ -183,12 +187,16 @@ async def refresh_access_token(
     refresh_token: str,
     db: AsyncSession,
     redis: aioredis.Redis,
+    client: str = CLIENT_APP,
 ) -> dict:
     """
     Rotate a refresh token: the old one is single-use and a new pair is issued.
     Replaying an already-used refresh token revokes the whole session.
+    Each client refreshes only its own tokens (public app vs admin panel).
     """
     payload = await decode_token(refresh_token, redis, expected_type="refresh")
+    if token_client(payload) != client:
+        raise InvalidTokenError()   # Checked before claiming, so it isn't burned
 
     if not await claim_refresh_token(payload, redis):
         await revoke_all_user_tokens(payload["sub"], redis)
@@ -199,9 +207,58 @@ async def refresh_access_token(
         raise InvalidTokenError()
     if not user.is_active:
         raise AccountDisabledError()
+    is_admin = user.role == UserRole.admin
+    if client == CLIENT_APP and is_admin:
+        raise UseAdminPanelError()       # e.g. a session from before the split
+    if client == CLIENT_ADMIN and not is_admin:
+        raise InsufficientRoleError("admin")
 
     # Role comes from the database, not the old token
-    return create_token_pair(str(user.id), user.role.value)
+    return create_token_pair(str(user.id), user.role.value, client)
+
+
+# ── Admin panel login (/admin/auth) ───────────────────────────────────────────
+_ADMIN_OTP_SCOPE = "admin_otp"
+
+
+async def _find_by_phone(phone: str, db: AsyncSession) -> User | None:
+    return (await db.execute(
+        select(User).where(User.phone_hash == _phone_hash(phone))
+    )).scalar_one_or_none()
+
+
+async def request_admin_otp(phone: str, db: AsyncSession, redis: aioredis.Redis) -> dict:
+    """
+    Send an admin login code. Answers the same whether or not the number is
+    an admin, so the endpoint can't be used to find admin numbers; only
+    active admins actually get an SMS.
+    """
+    phone = validate_phone(phone)
+    await check_rate_limit(phone, redis)
+
+    user = await _find_by_phone(phone, db)
+    if user is not None and user.role == UserRole.admin and user.is_active:
+        code = await generate_otp(phone, redis, scope=_ADMIN_OTP_SCOPE)
+        await send_otp_sms(phone, code)
+    else:
+        logger.warning("Admin OTP requested for a non-admin number")
+
+    return {"message": "OTP sent successfully", "expires_in": 300}
+
+
+async def verify_admin_otp(
+    phone: str, code: str, db: AsyncSession, redis: aioredis.Redis,
+) -> TokenResponse:
+    """Log an admin in to the admin panel. Never creates an account."""
+    phone = validate_phone(phone)
+    await verify_otp(phone, code, redis, scope=_ADMIN_OTP_SCOPE)
+
+    user = await _find_by_phone(phone, db)
+    if user is None or user.role != UserRole.admin:
+        raise InvalidOTPError()   # e.g. demoted since the code was sent
+    if not user.is_active:
+        raise AccountDisabledError()
+    return await _token_response(user, False, db, phone=phone, client=CLIENT_ADMIN)
 
 
 # ── Logout ────────────────────────────────────────────────────────────────────

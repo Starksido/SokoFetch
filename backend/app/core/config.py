@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     # ── App ───────────────────────────────────────────────────────────────────
     APP_NAME: str = "Soko Fetch"
     BASE_URL: str = "http://localhost:8000"
+    # Where the admin web panel is served from (allowed by CORS in production)
+    ADMIN_PANEL_ORIGIN: str = ""
     # Required, no default: a forgotten setting must not silently put
     # production into development mode (OTPs logged, /docs public, CORS *)
     ENVIRONMENT: Literal["development", "staging", "production"]
@@ -104,6 +106,10 @@ class Settings(BaseSettings):
         # "your_aws_access_key" is the .env.example placeholder, not a key
         has_key = bool(self.AWS_ACCESS_KEY_ID) and not self.AWS_ACCESS_KEY_ID.startswith("your_")
         return "s3" if has_key else "local"
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        return [o for o in (self.BASE_URL, self.ADMIN_PANEL_ORIGIN) if o]
 
     @property
     def is_production(self) -> bool:

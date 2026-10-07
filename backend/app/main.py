@@ -15,6 +15,7 @@ from app.merchant.router import router as merchant_router
 from app.courier.router import router as courier_router
 from app.customer.router import router as customer_router
 from app.admin.router import router as admin_router
+from app.admin.auth_router import router as admin_auth_router
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -47,7 +48,7 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if not settings.is_production else [settings.BASE_URL],
+    allow_origins=["*"] if not settings.is_production else settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,6 +64,7 @@ app.include_router(payments_router, prefix="/payments", tags=["Payments"])
 app.include_router(merchant_router, prefix="/merchant", tags=["Merchant"])
 app.include_router(courier_router,  prefix="/courier",  tags=["Courier"])
 app.include_router(customer_router, prefix="/customer", tags=["Customer"])
+app.include_router(admin_auth_router, prefix="/admin/auth", tags=["Admin login"])
 app.include_router(admin_router,    prefix="/admin",    tags=["Admin"])
 
 

@@ -12,22 +12,34 @@ logger = logging.getLogger("alphabet.auth.jwt")
 
 ROLES = {"customer", "merchant", "courier", "admin"}
 
+# Which client a token was issued to. Admin-panel tokens never work on the
+# public API and public-app tokens never work on /admin. Tokens issued before
+# the claim existed have none and count as public-app tokens.
+CLIENT_APP   = "app"
+CLIENT_ADMIN = "admin"
+
+
+def token_client(payload: dict) -> str:
+    return payload.get("client", CLIENT_APP)
+
 
 # ── Token creation ────────────────────────────────────────────────────────────
-def create_access_token(user_id: str, role: str) -> str:
+def create_access_token(user_id: str, role: str, client: str = CLIENT_APP) -> str:
     """30-minute access token with role claim."""
-    return _build_token(user_id, role, "access", settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    return _build_token(user_id, role, "access", settings.ACCESS_TOKEN_EXPIRE_MINUTES, client)
 
 
-def create_refresh_token(user_id: str, role: str) -> str:
+def create_refresh_token(user_id: str, role: str, client: str = CLIENT_APP) -> str:
     """30-day refresh token."""
     return _build_token(
         user_id, role, "refresh",
-        settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60
+        settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60, client,
     )
 
 
-def _build_token(user_id: str, role: str, token_type: str, expire_minutes: int) -> str:
+def _build_token(
+    user_id: str, role: str, token_type: str, expire_minutes: int, client: str = CLIENT_APP,
+) -> str:
     if role not in ROLES:
         raise ValueError(f"Invalid role: {role}")
 
@@ -36,6 +48,7 @@ def _build_token(user_id: str, role: str, token_type: str, expire_minutes: int) 
         "sub":  user_id,
         "role": role,
         "type": token_type,
+        "client": client,
         "iat":  now,
         "exp":  now + timedelta(minutes=expire_minutes),
         "jti":  secrets.token_urlsafe(16),   # Unique token ID for revocation
@@ -132,10 +145,10 @@ async def revoke_token(token: str, redis: aioredis.Redis) -> None:
 
 
 # ── Token pair helper ─────────────────────────────────────────────────────────
-def create_token_pair(user_id: str, role: str) -> dict:
+def create_token_pair(user_id: str, role: str, client: str = CLIENT_APP) -> dict:
     """Create both access and refresh tokens in one call."""
     return {
-        "access_token":  create_access_token(user_id, role),
-        "refresh_token": create_refresh_token(user_id, role),
+        "access_token":  create_access_token(user_id, role, client),
+        "refresh_token": create_refresh_token(user_id, role, client),
         "token_type":    "bearer",
     }

@@ -36,16 +36,30 @@ ALL_DOCS = ["national_id_front", "national_id_back", "driving_license",
 
 # ── Only admins get in ────────────────────────────────────────────────────────
 class TestAdminAccess:
+    """Real signed tokens through the real guards; only Redis and the DB are faked."""
+
     @pytest.fixture
-    async def client_as(self):
+    async def call(self):
         from app.main import app
-        from app.auth.guards import get_current_user
+        from app.auth.jwt import create_access_token
+        from app.core.database import get_db
+        from app.core.redis import get_redis
 
-        async def make(role):
-            app.dependency_overrides[get_current_user] = lambda: {"sub": str(uuid4()), "role": role}
-            return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+        redis = MagicMock()
+        redis.get = AsyncMock(return_value=None)            # Nothing revoked
+        active = MagicMock()
+        active.scalar_one_or_none.return_value = True       # Account is active
+        db = MagicMock()
+        db.execute = AsyncMock(return_value=active)
+        app.dependency_overrides[get_redis] = lambda: redis
+        app.dependency_overrides[get_db] = lambda: db
 
-        yield make
+        async def call(method, path, role, client="app"):
+            token = create_access_token(str(uuid4()), role, client)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+                return await getattr(c, method)(path, headers={"Authorization": f"Bearer {token}"})
+
+        yield call
         app.dependency_overrides.clear()
 
     @pytest.mark.parametrize("role", ["customer", "merchant", "courier"])
@@ -56,16 +70,29 @@ class TestAdminAccess:
         ("post", f"/admin/couriers/{uuid4()}/approve"),
         ("get", f"/admin/couriers/{uuid4()}/documents/selfie_with_id"),
     ])
-    async def test_non_admin_forbidden(self, client_as, role, method, path):
-        async with await client_as(role) as c:
-            resp = await getattr(c, method)(path)
+    async def test_non_admin_forbidden(self, call, role, method, path):
+        resp = await call(method, path, role)
         assert resp.status_code == 403
         assert resp.json()["detail"]["code"] == "INSUFFICIENT_ROLE"
 
-    async def test_malformed_id_is_422_not_500(self, client_as):
-        async with await client_as("admin") as c:
-            resp = await c.post("/admin/couriers/not-a-uuid/approve")
-        assert resp.status_code == 422
+    async def test_admin_role_in_a_public_app_token_is_not_enough(self, call):
+        # e.g. an admin session left on a phone from before the split
+        resp = await call("get", "/admin/merchants", "admin", client="app")
+        assert resp.status_code == 403
+
+    async def test_refunds_need_an_admin_panel_token(self, call):
+        resp = await call("post", f"/payments/refund?order_id={uuid4()}", "admin", client="app")
+        assert resp.status_code == 403
+
+    @pytest.mark.parametrize("role,client", [("admin", "admin"), ("admin", "app")])
+    async def test_public_api_refuses_admins(self, call, role, client):
+        resp = await call("get", "/auth/me", role, client)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "USE_ADMIN_PANEL"
+
+    async def test_admin_panel_token_reaches_admin_routes(self, call):
+        resp = await call("post", "/admin/couriers/not-a-uuid/approve", "admin", client="admin")
+        assert resp.status_code == 422   # Past the guard; rejected only for the bad id
 
 
 # ── Shops ─────────────────────────────────────────────────────────────────────

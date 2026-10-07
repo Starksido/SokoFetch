@@ -8,7 +8,7 @@ import redis.asyncio as aioredis
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.exceptions import SokoFetchException
-from app.auth.guards import get_current_user, require_role
+from app.auth.guards import RequireAdmin, get_current_user, require_role
 from app.payments import service
 from app.payments.mpesa import verify_callback_token
 from app.payments.flutterwave import verify_webhook_signature
@@ -151,7 +151,7 @@ async def flw_webhook(
 async def refund(
     order_id: str,
     reason:   str | None = None,
-    user:     dict       = Depends(require_role("admin")),
+    user:     dict       = Depends(RequireAdmin),
     db:       AsyncSession = Depends(get_db),
 ):
     return await service.refund_order(order_id=order_id, reason=reason, db=db)

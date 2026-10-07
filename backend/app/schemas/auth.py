@@ -47,6 +47,13 @@ class OTPVerifySchema(BaseModel):
         return v
 
 
+class AdminOTPVerifySchema(OTPRequestSchema):
+    """Admin panel login: phone and code only, no role and no sign-up."""
+    otp_code: str
+
+    _validate_otp = field_validator("otp_code")(OTPVerifySchema.validate_otp.__func__)
+
+
 class TokenRefreshSchema(BaseModel):
     refresh_token: str
 
