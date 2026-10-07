@@ -21,6 +21,7 @@ _PROD_SECRETS = {
     "MPESA_CONSUMER_SECRET": "cs",
     "MPESA_PASSKEY": "pk",
     "MPESA_CALLBACK_TOKEN": "tok",
+    "AWS_ACCESS_KEY_ID": "aws-key",
 }
 
 
@@ -58,3 +59,29 @@ class TestEnvironmentSetting:
     def test_production_fully_configured(self, monkeypatch):
         s = _settings(monkeypatch, ENVIRONMENT="production", **_BASE, **_PROD_SECRETS)
         assert s.is_production is True
+
+
+class TestDocumentStorage:
+    def test_local_without_aws_keys(self, monkeypatch):
+        s = _settings(monkeypatch, ENVIRONMENT="development", **_BASE)
+        assert s.document_storage == "local"
+
+    def test_env_example_placeholder_is_not_a_key(self, monkeypatch):
+        s = _settings(monkeypatch, ENVIRONMENT="development",
+                      AWS_ACCESS_KEY_ID="your_aws_access_key", **_BASE)
+        assert s.document_storage == "local"
+
+    def test_s3_when_aws_keys_set(self, monkeypatch):
+        s = _settings(monkeypatch, ENVIRONMENT="development",
+                      AWS_ACCESS_KEY_ID="aws-key", **_BASE)
+        assert s.document_storage == "s3"
+
+    def test_explicit_choice_wins(self, monkeypatch):
+        s = _settings(monkeypatch, ENVIRONMENT="development", DOCUMENT_STORAGE="local",
+                      AWS_ACCESS_KEY_ID="aws-key", **_BASE)
+        assert s.document_storage == "local"
+
+    def test_production_refuses_local_storage(self, monkeypatch):
+        values = {**_BASE, **_PROD_SECRETS, "DOCUMENT_STORAGE": "local"}
+        with pytest.raises(ValidationError, match="DOCUMENT_STORAGE"):
+            _settings(monkeypatch, ENVIRONMENT="production", **values)

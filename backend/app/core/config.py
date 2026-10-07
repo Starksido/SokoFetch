@@ -1,7 +1,8 @@
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
-from typing import Literal
+from pathlib import Path
+from typing import Literal, Optional
 
 
 class Settings(BaseSettings):
@@ -60,6 +61,12 @@ class Settings(BaseSettings):
     AWS_REGION: str = "af-south-1"
     DOCUMENTS_BUCKET: str = "alphabet-courier-docs"
 
+    # ── Rider document storage ────────────────────────────────────────────────
+    # "s3" or "local". Unset: S3 when AWS keys are set, otherwise a local folder
+    # (development only; production must use S3).
+    DOCUMENT_STORAGE: Optional[Literal["s3", "local"]] = None
+    LOCAL_DOCUMENTS_DIR: str = str(Path(__file__).resolve().parents[2] / "local_documents")
+
     # ── Google Maps ───────────────────────────────────────────────────────────
     GOOGLE_MAPS_API_KEY: str = ""
 
@@ -81,12 +88,22 @@ class Settings(BaseSettings):
             missing.append("AT_USERNAME (still 'sandbox')")
         if len(self.JWT_SECRET) < 32 or self.JWT_SECRET.startswith("REPLACE_"):
             missing.append("JWT_SECRET (placeholder or shorter than 32 characters)")
+        if self.document_storage != "s3":
+            missing.append("DOCUMENT_STORAGE (must be s3, with AWS keys set)")
         if missing:
             raise ValueError(
                 "ENVIRONMENT=production but these settings are missing or unsafe: "
                 + ", ".join(missing)
             )
         return self
+
+    @property
+    def document_storage(self) -> str:
+        if self.DOCUMENT_STORAGE:
+            return self.DOCUMENT_STORAGE
+        # "your_aws_access_key" is the .env.example placeholder, not a key
+        has_key = bool(self.AWS_ACCESS_KEY_ID) and not self.AWS_ACCESS_KEY_ID.startswith("your_")
+        return "s3" if has_key else "local"
 
     @property
     def is_production(self) -> bool:

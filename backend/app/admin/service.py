@@ -6,13 +6,12 @@ Approving or rejecting new shops and riders.
 import logging
 from datetime import datetime, timezone
 
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.config import settings
+from app.core import document_store
+from app.core.document_store import DocumentStoreError
 from app.core.encryption import decrypt_document
 from app.core.exceptions import NotFoundError, SokoFetchException
 from app.core.repository import MerchantRepo
@@ -137,18 +136,12 @@ def _sniff_content_type(data: bytes) -> str:
 
 
 def _download(s3_key: str) -> bytes:
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id     = settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key = settings.AWS_SECRET_ACCESS_KEY,
-        region_name           = settings.AWS_REGION,
-    )
-    return s3.get_object(Bucket=settings.DOCUMENTS_BUCKET, Key=s3_key)["Body"].read()
+    return document_store.get(s3_key)
 
 
 async def get_courier_document(courier_id: str, doc_type: str, db: AsyncSession) -> tuple[bytes, str]:
     """
-    Documents are encrypted before they go to S3, so a presigned URL would
+    Documents are encrypted before they are stored, so a presigned URL would
     only give ciphertext. Download, decrypt and hand back the file itself.
     """
     try:
@@ -165,8 +158,8 @@ async def get_courier_document(courier_id: str, doc_type: str, db: AsyncSession)
 
     try:
         encrypted = _download(doc.s3_key)
-    except (BotoCoreError, ClientError) as exc:
-        log.error("S3 download failed | courier=%s | type=%s | error=%s", courier_id, doc_type, exc)
+    except DocumentStoreError as exc:
+        log.error("Document download failed | courier=%s | type=%s | error=%s", courier_id, doc_type, exc)
         raise SokoFetchException(502, "DOWNLOAD_FAILED", "Could not fetch the document. Please retry.")
     try:
         data = decrypt_document(encrypted)

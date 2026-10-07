@@ -29,3 +29,6 @@ Thumbs.db
 **/android/.gradle/
 **/ios/Flutter/ephemeral/
 **/.idea/
+
+# Rider documents stored locally in development (DOCUMENT_STORAGE=local)
+backend/local_documents/

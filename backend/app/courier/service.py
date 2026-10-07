@@ -14,8 +14,6 @@ from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import UUID
 
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, cast
 from sqlalchemy.orm import selectinload
@@ -32,8 +30,9 @@ from app.core.exceptions import SokoFetchException, ObjectAccessDeniedError, Cou
 from app.orders.pricing import _haversine_km
 from app.orders.service import ASSIGNABLE_STATUSES, assign_courier
 from app.schemas.order import OrderDetail
-from app.core.config import settings
 from app.core.encryption import encrypt_document
+from app.core import document_store
+from app.core.document_store import DocumentStoreError
 
 log = logging.getLogger("alphabet.courier.service")
 
@@ -119,24 +118,12 @@ async def upload_document(
     # Encrypt
     encrypted_bytes = encrypt_document(file_bytes)
 
-    # Upload to S3
+    # Store (S3, or a local folder in development)
     s3_key = f"courier-docs/{courier.id}/{doc_type}/{secrets.token_urlsafe(12)}"
     try:
-        s3 = boto3.client(
-            "s3",
-            aws_access_key_id     = settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key = settings.AWS_SECRET_ACCESS_KEY,
-            region_name           = settings.AWS_REGION,
-        )
-        s3.put_object(
-            Bucket               = settings.DOCUMENTS_BUCKET,
-            Key                  = s3_key,
-            Body                 = encrypted_bytes,
-            ContentType          = "application/octet-stream",
-            ServerSideEncryption = "AES256",
-        )
-    except (BotoCoreError, ClientError) as exc:
-        log.error("S3 upload failed | courier=%s | type=%s | error=%s", courier.id, doc_type, exc)
+        document_store.put(s3_key, encrypted_bytes)
+    except DocumentStoreError as exc:
+        log.error("Document upload failed | courier=%s | type=%s | error=%s", courier.id, doc_type, exc)
         raise SokoFetchException(502, "UPLOAD_FAILED", "Document upload failed. Please retry.")
 
     # Upsert CourierDocument record

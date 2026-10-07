@@ -10,18 +10,24 @@ that already have an account are skipped, so it is safe to re-run. Each
 account can also log in: request an OTP for its number and read the code
 from the backend log (DEV MODE).
 
-Document records point at S3 keys that don't exist unless S3 is set up, so
-the admin screen shows "Could not fetch the document" for their images.
+Each rider document gets a placeholder image (a coloured card per document
+type), encrypted and saved through the document store like a real upload, so
+the admin screen can show it. Re-running fills in any that are missing.
 """
 import asyncio
+import struct
 import sys
+import zlib
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from app.auth.otp import validate_phone
 from app.auth.service import _phone_hash
+from app.core import document_store
 from app.core.config import settings
+from app.core.document_store import DocumentStoreError
+from app.core.encryption import encrypt_document
 from app.core.database import AsyncSessionLocal
 from app.models.courier import (
     Courier, CourierDocument, CourierStatus, DocumentType, VehicleType,
@@ -51,6 +57,59 @@ RIDERS = [
          docs=[DocumentType.national_id_front, DocumentType.national_id_back,
                DocumentType.vehicle_photo]),
 ]
+
+
+# Card colour per document type, so the placeholders are easy to tell apart
+_DOC_COLOURS = {
+    DocumentType.national_id_front: (0x00, 0x6A, 0x62),
+    DocumentType.national_id_back:  (0x00, 0x4F, 0x49),
+    DocumentType.driving_license:   (0xAB, 0x35, 0x00),
+    DocumentType.vehicle_photo:     (0xF5, 0xA6, 0x23),
+    DocumentType.selfie_with_id:    (0x59, 0x41, 0x39),
+}
+
+
+def _placeholder_png(colour: tuple[int, int, int], w: int = 480, h: int = 300) -> bytes:
+    """An ID-card-like image: coloured card, light photo box, text lines."""
+    def pixel(x: int, y: int) -> tuple[int, int, int]:
+        if 30 <= x < 150 and 60 <= y < 220:                         # Photo box
+            return (0xF3, 0xF4, 0xF5)
+        if 180 <= x < 440 and any(y0 <= y < y0 + 14 for y0 in (70, 110, 150, 190)):
+            return (0xFF, 0xFF, 0xFF)                                # Text lines
+        if y < 36:                                                   # Header band
+            return tuple(c // 2 for c in colour)
+        return colour
+
+    rows = b"".join(
+        b"\x00" + b"".join(bytes(pixel(x, y)) for x in range(w)) for y in range(h)
+    )
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9))
+            + chunk(b"IEND", b""))
+
+
+async def _store_placeholders(db) -> int:
+    """Give every seeded document an image if it doesn't have one yet."""
+    docs = (await db.execute(
+        select(CourierDocument).where(CourierDocument.s3_key.like("seed/%"))
+    )).scalars().all()
+    stored = 0
+    for doc in docs:
+        try:
+            document_store.get(doc.s3_key)
+            continue
+        except DocumentStoreError:
+            pass
+        png = _placeholder_png(_DOC_COLOURS[doc.doc_type])
+        document_store.put(doc.s3_key, encrypt_document(png))
+        stored += 1
+    return stored
 
 
 async def _new_user(db, phone: str, role: UserRole) -> User | None:
@@ -104,6 +163,10 @@ async def main() -> int:
                   f"({r['status'].value}, {len(r['docs'])}/{len(ALL_DOCS)} documents)")
 
         await db.commit()
+
+        stored = await _store_placeholders(db)
+        print(f"images {stored} placeholder document(s) saved "
+              f"({settings.document_storage} storage)")
     return 0
 
 
