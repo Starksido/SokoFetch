@@ -5,10 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:pinput/pinput.dart';
 
 import '../../core/errors.dart';
-import '../../core/theme.dart';
+import '../../core/ui/ui.dart';
 import 'auth_service.dart';
 import 'continue_after_auth.dart';
-import 'welcome_screen.dart' show ErrorBanner;
 
 class OtpScreen extends ConsumerStatefulWidget {
   const OtpScreen({super.key});
@@ -85,73 +84,75 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     final pinTheme = PinTheme(
-      width: 54,
-      height: 60,
-      textStyle: const TextStyle(
-          fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.brand),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(12),
+      width: 48,
+      height: 56,
+      textStyle: text.headlineSmall,
+      decoration: const BoxDecoration(
+        color: SfColors.surface2,
+        borderRadius: SfRadius.mdAll,
       ),
     );
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: AppTheme.brand,
-        title: const Text('Verify Phone',
-            style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 20,
-                color: AppTheme.brand)),
-      ),
+      appBar: AppBar(),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Column(
-            children: [
-              const SizedBox(height: 40),
-              const Icon(Icons.sms_outlined, size: 64, color: AppTheme.accent),
-              const SizedBox(height: 24),
-              const Text('Enter the 6-digit code',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.brand)),
-              const SizedBox(height: 8),
-              Text('Sent to $_phone',
-                  style: const TextStyle(color: Colors.black54)),
-              const SizedBox(height: 40),
-              Pinput(
-                controller: _pinCtrl,
-                length: 6,
-                autofocus: true,
-                defaultPinTheme: pinTheme,
-                focusedPinTheme: pinTheme.copyDecorationWith(
-                  border: Border.all(color: AppTheme.accent, width: 2),
+        child: MaxWidth(
+          maxWidth: 480,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                SfSpace.lg, SfSpace.xs, SfSpace.lg, SfSpace.lg),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Enter the 6-digit code', style: text.headlineMedium),
+                const SizedBox(height: SfSpace.xs),
+                Text.rich(
+                  TextSpan(children: [
+                    const TextSpan(text: 'We sent it to '),
+                    TextSpan(
+                        text: _phone,
+                        style: const TextStyle(
+                            color: SfColors.ink, fontWeight: FontWeight.w600)),
+                  ]),
+                  style: text.bodyLarge!.copyWith(color: SfColors.inkMuted),
                 ),
-                onCompleted: _verify,
-              ),
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                ErrorBanner(_error!),
+                const SizedBox(height: SfSpace.xl),
+                Center(
+                  child: Pinput(
+                    controller: _pinCtrl,
+                    length: 6,
+                    autofocus: true,
+                    defaultPinTheme: pinTheme,
+                    focusedPinTheme: pinTheme.copyDecorationWith(
+                      color: SfColors.surface,
+                      border: Border.all(color: SfColors.ink, width: 2),
+                    ),
+                    errorPinTheme: pinTheme.copyDecorationWith(
+                      border: Border.all(color: SfColors.danger, width: 2),
+                    ),
+                    forceErrorState: _error != null,
+                    onCompleted: _verify,
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: SfSpace.md),
+                  InlineMessage(_error!),
+                ],
+                const SizedBox(height: SfSpace.lg),
+                if (_loading)
+                  const SfLoader()
+                else if (_secondsLeft > 0)
+                  Text('Resend code in ${_secondsLeft}s', style: text.bodyMedium)
+                else
+                  SfButton.secondary(
+                    label: "Didn't get it? Resend code",
+                    expand: false,
+                    onPressed: _resend,
+                  ),
               ],
-              const SizedBox(height: 32),
-              if (_loading)
-                const CircularProgressIndicator(color: AppTheme.accent)
-              else if (_secondsLeft > 0)
-                Text('Resend code in ${_secondsLeft}s',
-                    style: const TextStyle(color: Colors.black38))
-              else
-                TextButton(
-                  onPressed: _resend,
-                  child: const Text("Didn't receive it? Resend",
-                      style: TextStyle(
-                          color: AppTheme.accent, fontWeight: FontWeight.w600)),
-                ),
-            ],
+            ),
           ),
         ),
       ),

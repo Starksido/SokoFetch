@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/models.dart';
 import '../../core/session.dart';
-import '../../core/theme.dart';
+import '../../core/ui/ui.dart';
 import 'auth_service.dart';
 
 /// Decides where the app opens: the welcome screen, or the signed-in
@@ -81,56 +81,46 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
-      backgroundColor: AppTheme.brand,
+      backgroundColor: SfColors.accent,
       body: FadeTransition(
         opacity: _fade,
-        child: Center(
+        child: SafeArea(
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Container(
-                width: 88,
-                height: 88,
-                decoration: BoxDecoration(
-                  color: AppTheme.accent,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: const Icon(Icons.delivery_dining,
-                    color: Colors.white, size: 48),
+              const Spacer(),
+              const SokoMark(size: 88, inverted: true),
+              const SizedBox(height: SfSpace.lg),
+              const SokoWordmark(color: Colors.white, size: 30),
+              const SizedBox(height: SfSpace.xs),
+              Text('Your local shops, delivered',
+                  style: text.bodyLarge!.copyWith(color: Colors.white)),
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.all(SfSpace.lg),
+                child: _locked
+                    ? Column(children: [
+                        SfButton.primary(
+                          label: 'Unlock',
+                          icon: Icons.lock_open_rounded,
+                          onPressed: _unlock,
+                        ),
+                        const SizedBox(height: SfSpace.xs),
+                        TextButton(
+                          onPressed: Session.logout,
+                          style: TextButton.styleFrom(
+                              foregroundColor: Colors.white),
+                          child: const Text('Use another account'),
+                        ),
+                      ])
+                    : const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2.5),
+                      ),
               ),
-              const SizedBox(height: 24),
-              const Text(
-                'SOKO FETCH',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 6,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text('On-Demand Delivery',
-                  style: TextStyle(color: Colors.white54)),
-              const SizedBox(height: 64),
-              if (_locked) ...[
-                ElevatedButton.icon(
-                  onPressed: _unlock,
-                  icon: const Icon(Icons.lock_open),
-                  label: const Text('Unlock'),
-                ),
-                const TextButton(
-                  onPressed: Session.logout,
-                  child: Text('Use another account',
-                      style: TextStyle(color: Colors.white70)),
-                ),
-              ] else
-                const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                      color: AppTheme.accent, strokeWidth: 2.5),
-                ),
             ],
           ),
         ),

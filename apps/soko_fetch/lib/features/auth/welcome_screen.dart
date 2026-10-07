@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/errors.dart';
 import '../../core/google_sign_in.dart';
-import '../../core/theme.dart';
+import '../../core/ui/ui.dart';
 import 'auth_service.dart';
 import 'continue_after_auth.dart';
 
@@ -21,6 +21,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
   final _formKey = GlobalKey<FormState>();
   final _phoneCtrl = TextEditingController();
   bool _loading = false;
+  bool _googleLoading = false;
   String? _error;
 
   String get _normalised {
@@ -38,14 +39,14 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
       if (!mounted) return;
       Navigator.of(context).pushNamed('/auth/otp', arguments: _normalised);
     } catch (e) {
-      setState(() => _error = errorMessage(e, 'Failed to send OTP. Please try again.'));
+      setState(() => _error = errorMessage(e, 'Failed to send the code. Please try again.'));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _signInWithGoogle() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() { _googleLoading = true; _error = null; });
     try {
       final google = await GoogleSignInService.instance.signIn();
       if (google == null) return; // Cancelled
@@ -57,7 +58,7 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
         setState(() => _error = errorMessage(e, 'Google sign-in failed. Please try again.'));
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _googleLoading = false);
     }
   }
 
@@ -69,154 +70,96 @@ class _WelcomeScreenState extends ConsumerState<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final busy = _loading || _googleLoading;
     return Scaffold(
-      backgroundColor: Colors.white,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 64),
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent,
-                    borderRadius: BorderRadius.circular(14),
+        child: MaxWidth(
+          maxWidth: 480,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                SfSpace.lg, SfSpace.xl, SfSpace.lg, SfSpace.lg),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(children: [
+                    SokoMark(size: 40),
+                    SizedBox(width: SfSpace.sm),
+                    Flexible(child: SokoWordmark()),
+                  ]),
+                  const SizedBox(height: SfSpace.xxl),
+                  Text('Your local shops,\ndelivered.', style: text.headlineMedium),
+                  const SizedBox(height: SfSpace.xs),
+                  Text('Sign in or create an account with your phone number.',
+                      style: text.bodyLarge!.copyWith(color: SfColors.inkMuted)),
+                  const SizedBox(height: SfSpace.xl),
+                  TextFormField(
+                    controller: _phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    textInputAction: TextInputAction.go,
+                    onFieldSubmitted: (_) => busy ? null : _submit(),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[0-9+]'))
+                    ],
+                    style: text.bodyLarge,
+                    decoration: InputDecoration(
+                      hintText: '0712 345 678',
+                      prefixIcon: Padding(
+                        padding: const EdgeInsets.only(
+                            left: SfSpace.md, right: SfSpace.xs),
+                        child: Text('🇰🇪  +254',
+                            style: text.bodyLarge!
+                                .copyWith(fontWeight: FontWeight.w600)),
+                      ),
+                      prefixIconConstraints:
+                          const BoxConstraints(minWidth: 0, minHeight: 0),
+                    ),
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return 'Enter your phone number';
+                      final p = v.trim().replaceAll(RegExp(r'[\s\-]'), '');
+                      if (p.length < 9) return 'Phone number is too short';
+                      return null;
+                    },
                   ),
-                  child: const Icon(Icons.delivery_dining,
-                      color: Colors.white, size: 30),
-                ),
-                const SizedBox(height: 36),
-                const Text('Welcome to Soko Fetch',
-                    style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.brand)),
-                const SizedBox(height: 8),
-                const Text(
-                    'Sign in or create an account with your phone number.',
-                    style: TextStyle(color: Colors.black54)),
-                const SizedBox(height: 40),
-                TextFormField(
-                  controller: _phoneCtrl,
-                  keyboardType: TextInputType.phone,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[0-9+]'))
+                  if (_error != null) ...[
+                    const SizedBox(height: SfSpace.sm),
+                    InlineMessage(_error!),
                   ],
-                  decoration: InputDecoration(
-                    labelText: 'Phone number',
-                    hintText: '0712 345 678',
-                    prefixIcon: const Icon(Icons.phone_outlined),
-                    filled: false,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(color: Colors.black26)),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide:
-                          const BorderSide(color: AppTheme.accent, width: 2),
-                    ),
+                  const SizedBox(height: SfSpace.md),
+                  SfButton.primary(
+                    label: 'Continue',
+                    loading: _loading,
+                    onPressed: busy ? null : _submit,
                   ),
-                  validator: (v) {
-                    if (v == null || v.isEmpty) return 'Enter your phone number';
-                    final p = v.trim().replaceAll(RegExp(r'[\s\-]'), '');
-                    if (p.length < 9) return 'Phone number is too short';
-                    return null;
-                  },
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 12),
-                  ErrorBanner(_error!),
+                  const SizedBox(height: SfSpace.lg),
+                  Row(children: [
+                    const Expanded(child: Divider()),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: SfSpace.sm),
+                      child: Text('or', style: text.bodyMedium),
+                    ),
+                    const Expanded(child: Divider()),
+                  ]),
+                  const SizedBox(height: SfSpace.lg),
+                  SfButton.secondary(
+                    label: 'Continue with Google',
+                    icon: Icons.g_mobiledata_rounded,
+                    loading: _googleLoading,
+                    onPressed: busy ? null : _signInWithGoogle,
+                  ),
+                  const SizedBox(height: SfSpace.lg),
+                  Text(
+                    "We'll text you a 6-digit code. Standard SMS rates may apply.",
+                    style: text.bodySmall,
+                  ),
                 ],
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton(
-                    onPressed: _loading ? null : _submit,
-                    style: ElevatedButton.styleFrom(
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                    child: _loading
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                                color: Colors.white, strokeWidth: 2.5))
-                        : const Text('Get OTP',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w600)),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Row(children: [
-                  Expanded(child: Divider()),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('or', style: TextStyle(color: Colors.black38)),
-                  ),
-                  Expanded(child: Divider()),
-                ]),
-                const SizedBox(height: 16),
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: OutlinedButton.icon(
-                    onPressed: _loading ? null : _signInWithGoogle,
-                    icon: const Icon(Icons.g_mobiledata, size: 28),
-                    label: const Text('Continue with Google',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w600)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.black87,
-                      side: const BorderSide(color: Colors.black26),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Center(
-                  child: Text(
-                    "We'll send a 6-digit code to your phone.\nStandard SMS rates may apply.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.black38, fontSize: 12),
-                  ),
-                ),
-                const SizedBox(height: 24),
-              ],
+              ),
             ),
           ),
         ),
       ),
     );
   }
-}
-
-class ErrorBanner extends StatelessWidget {
-  const ErrorBanner(this.message, {super.key});
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppTheme.accent.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(children: [
-          const Icon(Icons.error_outline, color: AppTheme.accent, size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-              child: Text(message,
-                  style: const TextStyle(color: AppTheme.accent))),
-        ]),
-      );
 }
