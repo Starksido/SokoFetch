@@ -430,14 +430,28 @@ class _ActiveOrderCardState extends State<_ActiveOrderCard> {
 
   @override
   Widget build(BuildContext context) {
-    final o = widget.order;
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
+    // Scrolls when space is short (small phones, keyboard open); otherwise
+    // the map panel fills whatever the details card leaves
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              minHeight: (constraints.maxHeight - 32).clamp(0.0, double.infinity)),
+          child: IntrinsicHeight(child: _content(widget.order)),
+        ),
+      ),
+    );
+  }
+
+  Widget _content(Order o) {
+    return Column(
         children: [
           Expanded(
             child: Container(
               width: double.infinity,
+              // Room for the "next step" banner even when space is tight
+              constraints: const BoxConstraints(minHeight: 110),
               decoration: BoxDecoration(
                 color: AppTheme.surfaceHigh,
                 borderRadius: BorderRadius.circular(18),
@@ -561,7 +575,6 @@ class _ActiveOrderCardState extends State<_ActiveOrderCard> {
             ),
           ),
         ],
-      ),
     );
   }
 
@@ -628,12 +641,26 @@ class _ActiveOrderCardState extends State<_ActiveOrderCard> {
     }
 
     if (o.isInTransit) {
-      return ElevatedButton.icon(
-        onPressed: () =>
-            Navigator.pushNamed(context, '/courier/delivery-proof', arguments: o),
-        icon: const Icon(Icons.check_circle_outline, size: 18),
-        label: const Text('Confirm Delivery'),
-        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.green),
+      return Column(
+        children: [
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pushNamed(
+                context, '/courier/delivery-proof', arguments: o),
+            icon: const Icon(Icons.check_circle_outline, size: 18),
+            label: const Text('Confirm Delivery'),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.green),
+          ),
+          const SizedBox(height: 8),
+          // Directions are needed most on the way to the customer
+          OutlinedButton.icon(
+            onPressed: () => _navigateTo(context, o.deliveryLatitude,
+                o.deliveryLongitude, o.deliveryAddress),
+            icon: const Icon(Icons.navigation_outlined, size: 18),
+            label: const Text('Navigate to Customer'),
+            style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(48)),
+          ),
+        ],
       );
     }
 
