@@ -154,24 +154,41 @@ class _CategoryGrid extends StatelessWidget {
           childAspectRatio: 1.6,
           children: [
             for (final c in kShopCategories)
-              Material(
-                color: SfColors.surface2,
+              ClipRRect(
                 borderRadius: SfRadius.mdAll,
-                child: InkWell(
-                  borderRadius: SfRadius.mdAll,
-                  onTap: () => onSelected(c.value),
-                  child: Padding(
-                    padding: const EdgeInsets.all(SfSpace.md),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Icon(c.icon, size: 28),
-                        Text(c.label, style: text.titleSmall),
-                      ],
+                child: Stack(fit: StackFit.expand, children: [
+                  c.image == null
+                      ? const ColoredBox(color: SfColors.surface2)
+                      : Image.asset(c.image!,
+                          fit: BoxFit.cover,
+                          cacheWidth: 480,
+                          errorBuilder: (_, __, ___) =>
+                              const ColoredBox(color: SfColors.surface2)),
+                  // Dark fade at the bottom so the name stays readable
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: [0.35, 1],
+                        colors: [Colors.transparent, Color(0xB3000000)],
+                      ),
                     ),
                   ),
-                ),
+                  Positioned(
+                    left: SfSpace.sm,
+                    right: SfSpace.sm,
+                    bottom: SfSpace.sm,
+                    child: Text(c.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.titleSmall!.copyWith(color: Colors.white)),
+                  ),
+                  Material(
+                    type: MaterialType.transparency,
+                    child: InkWell(onTap: () => onSelected(c.value)),
+                  ),
+                ]),
               ),
           ],
         ),

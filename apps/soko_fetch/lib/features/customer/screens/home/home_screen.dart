@@ -274,7 +274,7 @@ class _CategoryRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    Widget tile(String? value, String label, IconData icon) {
+    Widget tile(String? value, String label, IconData icon, String? image) {
       final isSelected = value == selected;
       return Semantics(
         selected: isSelected,
@@ -283,19 +283,21 @@ class _CategoryRail extends StatelessWidget {
           borderRadius: SfRadius.mdAll,
           onTap: () => onSelected(isSelected ? null : value),
           child: SizedBox(
-            width: 72,
+            width: 76,
             child: Column(children: [
+              // Orange ring around the selected photo
               AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
-                width: 56,
-                height: 56,
+                width: 68,
+                height: 68,
+                padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
-                  color: isSelected ? SfColors.brand : SfColors.surface2,
                   shape: BoxShape.circle,
+                  border: Border.all(
+                      color: isSelected ? SfColors.brand : Colors.transparent,
+                      width: 2.5),
                 ),
-                child: Icon(icon,
-                    color: isSelected ? SfColors.onBrand : SfColors.accentStrong,
-                    size: 26),
+                child: CategoryPhoto(image: image, icon: icon),
               ),
               const SizedBox(height: SfSpace.xs),
               Text(label,
@@ -311,13 +313,14 @@ class _CategoryRail extends StatelessWidget {
     }
 
     return SizedBox(
-      height: 96,
+      height: 104,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: SfSpace.xs),
         children: [
-          tile(null, 'All', Icons.apps_rounded),
-          for (final c in kShopCategories) tile(c.value, c.label, c.icon),
+          tile(null, 'All', Icons.apps_rounded, kAllCategoriesImage),
+          for (final c in kShopCategories)
+            tile(c.value, c.label, c.icon, c.image),
         ],
       ),
     );

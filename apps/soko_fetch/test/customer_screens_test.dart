@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:soko_fetch/core/api_client.dart';
 import 'package:soko_fetch/features/customer/models/models.dart';
 import 'package:soko_fetch/features/customer/providers/providers.dart';
+import 'package:soko_fetch/features/customer/screens/browse/browse_screen.dart';
 import 'package:soko_fetch/features/customer/screens/cart/cart_screen.dart';
 import 'package:soko_fetch/features/customer/screens/checkout/checkout_screen.dart';
 import 'package:soko_fetch/features/customer/screens/checkout/mpesa_payment_screen.dart';
@@ -12,6 +14,7 @@ import 'package:soko_fetch/features/customer/screens/merchant/merchant_screen.da
 import 'package:soko_fetch/features/customer/screens/orders/orders_screen.dart';
 import 'package:soko_fetch/features/customer/screens/tracking/tracking_screen.dart';
 import 'package:soko_fetch/features/customer/shell.dart';
+import 'package:soko_fetch/features/customer/widgets/categories.dart';
 
 import 'helpers.dart';
 import 'ui_helpers.dart';
@@ -134,10 +137,22 @@ void _serveOrder() {
 
 void main() {
   setUpAll(loadAppFont);
+
+  test('every category has a bundled photo', () async {
+    for (final image in [
+      kAllCategoriesImage,
+      for (final c in kShopCategories) c.image,
+    ]) {
+      expect(image, isNotNull);
+      expect((await rootBundle.load(image!)).lengthInBytes, greaterThan(1000),
+          reason: image);
+    }
+  });
   setUp(_serveOrder);
 
   final screens = <String, (Widget, Object?)>{
     'home': (const CustomerShell(), null),
+    'browse': (const BrowseScreen(), null),
     'shop page': (const MerchantScreen(), 'm1'),
     'cart': (const CartScreen(), null),
     'checkout': (const CheckoutScreen(), null),
