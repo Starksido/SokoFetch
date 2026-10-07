@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/errors.dart';
 import '../../core/session.dart';
-import '../../core/theme.dart';
+import '../../core/ui/ui.dart';
 import 'admin_api.dart';
 
 /// Admins approve or reject new shops and riders.
@@ -15,17 +15,23 @@ class AdminHomeScreen extends StatelessWidget {
         length: 2,
         child: Scaffold(
           appBar: AppBar(
-            title: const Text('Soko Fetch Admin'),
+            titleSpacing: SfSpace.md,
+            title: const Row(children: [
+              SokoMark(size: 32),
+              SizedBox(width: SfSpace.sm),
+              Flexible(
+                  child: Text('Soko Fetch Admin',
+                      overflow: TextOverflow.ellipsis)),
+            ]),
             actions: const [
               IconButton(
                 tooltip: 'Log out',
-                icon: Icon(Icons.logout),
+                icon: Icon(Icons.logout_rounded),
                 onPressed: Session.logout,
               ),
+              SizedBox(width: SfSpace.xs),
             ],
             bottom: const TabBar(
-              labelColor: AppTheme.accent,
-              indicatorColor: AppTheme.accent,
               tabs: [
                 Tab(icon: Icon(Icons.storefront_outlined), text: 'Shops'),
                 Tab(icon: Icon(Icons.delivery_dining_outlined), text: 'Riders'),
@@ -64,12 +70,13 @@ Future<String?> askRejectReason(BuildContext context, String what) {
           child: const Text('Cancel'),
         ),
         TextButton(
+          style: TextButton.styleFrom(foregroundColor: SfColors.danger),
           onPressed: () {
             if (formKey.currentState!.validate()) {
               Navigator.pop(dialogContext, ctrl.text.trim());
             }
           },
-          child: const Text('Reject', style: TextStyle(color: AppTheme.red)),
+          child: const Text('Reject'),
         ),
       ],
     ),
@@ -94,59 +101,77 @@ Future<void> runAdminAction(
   ref.invalidate(list);
 }
 
-class _Empty extends StatelessWidget {
-  const _Empty(this.message);
-  final String message;
+/// Keeps a centred state scrollable so pull-to-refresh still works.
+class _Pullable extends StatelessWidget {
+  const _Pullable(this.child);
+  final Widget child;
 
   @override
-  Widget build(BuildContext context) => ListView(children: [
-        const SizedBox(height: 120),
-        const Icon(Icons.check_circle_outline, size: 56, color: AppTheme.teal),
-        const SizedBox(height: 12),
-        Center(
-            child: Text(message, style: const TextStyle(color: AppTheme.mgray))),
-      ]);
-}
-
-class _LoadError extends StatelessWidget {
-  const _LoadError(this.error, this.onRetry);
-  final Object error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) => Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(errorMessage(error, 'Could not load.')),
-          const SizedBox(height: 12),
-          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
-        ]),
+  Widget build(BuildContext context) => LayoutBuilder(
+        builder: (_, box) => SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: box.maxHeight),
+            child: child,
+          ),
+        ),
       );
 }
 
-// ── Shops ─────────────────────────────────────────────────────────────────────
-class _ShopsTab extends ConsumerWidget {
-  const _ShopsTab();
+/// The list of pending sign-ups, or its empty, loading and error states.
+class _ReviewList<T> extends ConsumerWidget {
+  const _ReviewList({
+    required this.provider,
+    required this.emptyIcon,
+    required this.emptyTitle,
+    required this.itemBuilder,
+  });
+
+  final AutoDisposeFutureProvider<List<T>> provider;
+  final IconData emptyIcon;
+  final String emptyTitle;
+  final Widget Function(T item) itemBuilder;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final shops = ref.watch(pendingShopsProvider);
+    final items = ref.watch(provider);
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(pendingShopsProvider.future),
-      child: shops.when(
-        loading: () => const Center(
-            child: CircularProgressIndicator(color: AppTheme.accent)),
-        error: (e, _) =>
-            _LoadError(e, () => ref.invalidate(pendingShopsProvider)),
+      onRefresh: () => ref.refresh(provider.future),
+      child: items.when(
+        loading: () => const SfLoader(),
+        error: (e, _) => _Pullable(ErrorState(
+          message: errorMessage(e, 'Could not load.'),
+          onRetry: () => ref.invalidate(provider),
+        )),
         data: (list) => list.isEmpty
-            ? const _Empty('No shops waiting for approval')
-            : ListView.builder(
-                padding: const EdgeInsets.all(16),
+            ? _Pullable(EmptyState(
+                icon: emptyIcon,
+                title: emptyTitle,
+                message: 'New sign-ups will appear here.',
+              ))
+            : ListView.separated(
+                padding: const EdgeInsets.all(SfSpace.md),
                 itemCount: list.length,
-                itemBuilder: (_, i) => _ShopCard(shop: list[i]),
+                separatorBuilder: (_, __) => const SizedBox(height: SfSpace.sm),
+                itemBuilder: (_, i) =>
+                    MaxWidth(maxWidth: 720, child: itemBuilder(list[i])),
               ),
       ),
     );
   }
+}
+
+// ── Shops ─────────────────────────────────────────────────────────────────────
+class _ShopsTab extends StatelessWidget {
+  const _ShopsTab();
+
+  @override
+  Widget build(BuildContext context) => _ReviewList<PendingShop>(
+        provider: pendingShopsProvider,
+        emptyIcon: Icons.storefront_outlined,
+        emptyTitle: 'No shops waiting for approval',
+        itemBuilder: (shop) => _ShopCard(shop: shop),
+      );
 }
 
 class _ShopCard extends ConsumerWidget {
@@ -155,26 +180,37 @@ class _ShopCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final text = Theme.of(context).textTheme;
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(SfSpace.md),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(shop.shopName,
-                style:
-                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-            Text(
-                '${shop.category.replaceAll('_', ' ')} · signed up ${formatDate(shop.createdAt)}',
-                style: const TextStyle(color: AppTheme.mgray, fontSize: 12)),
-            const SizedBox(height: 10),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const _Avatar(icon: Icons.storefront_outlined),
+              const SizedBox(width: SfSpace.sm),
+              Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(shop.shopName, style: text.titleMedium),
+                      const SizedBox(height: 2),
+                      Text(
+                          '${shop.category.replaceAll('_', ' ')} · signed up ${formatDate(shop.createdAt)}',
+                          style: text.bodySmall),
+                    ]),
+              ),
+              const SizedBox(width: SfSpace.xs),
+              const StatusPill('Pending', tone: PillTone.warning),
+            ]),
+            const SizedBox(height: SfSpace.sm),
             _Line(Icons.location_on_outlined, '${shop.address}, ${shop.city}'),
             if (shop.payoutPhone != null)
               _Line(Icons.phone_android_outlined, 'Payout ${shop.payoutPhone}'),
             if (shop.description != null && shop.description!.isNotEmpty)
               _Line(Icons.notes_outlined, shop.description!),
-            const SizedBox(height: 12),
+            const SizedBox(height: SfSpace.md),
             ApproveRejectRow(
               onApprove: () => runAdminAction(
                 context, ref, () => AdminApi.approveShop(shop.id),
@@ -199,52 +235,48 @@ class _ShopCard extends ConsumerWidget {
 }
 
 // ── Riders ────────────────────────────────────────────────────────────────────
-class _RidersTab extends ConsumerWidget {
+class _RidersTab extends StatelessWidget {
   const _RidersTab();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final riders = ref.watch(pendingRidersProvider);
-    return RefreshIndicator(
-      onRefresh: () => ref.refresh(pendingRidersProvider.future),
-      child: riders.when(
-        loading: () => const Center(
-            child: CircularProgressIndicator(color: AppTheme.accent)),
-        error: (e, _) =>
-            _LoadError(e, () => ref.invalidate(pendingRidersProvider)),
-        data: (list) => list.isEmpty
-            ? const _Empty('No riders waiting for review')
-            : ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: list.length,
-                itemBuilder: (_, i) {
-                  final r = list[i];
-                  final p = r.profile;
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      leading: const CircleAvatar(
-                        backgroundColor: AppTheme.primaryFixed,
-                        child: Icon(Icons.delivery_dining,
-                            color: AppTheme.accent),
-                      ),
-                      title: Text(p.fullName ?? 'Unnamed rider',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text(
-                          '${p.vehicleType.replaceAll('_', ' ')}'
-                          '${p.vehiclePlate != null ? ' · ${p.vehiclePlate}' : ''}'
-                          ' · ${p.documents.length} documents'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.pushNamed(
-                          context, '/rider',
-                          arguments: p.id),
-                    ),
-                  );
-                },
+  Widget build(BuildContext context) => _ReviewList<RiderReview>(
+        provider: pendingRidersProvider,
+        emptyIcon: Icons.delivery_dining_outlined,
+        emptyTitle: 'No riders waiting for review',
+        itemBuilder: (r) {
+          final p = r.profile;
+          return Card(
+            clipBehavior: Clip.antiAlias,
+            child: Builder(
+              builder: (context) => ListRow(
+                leading: const _Avatar(icon: Icons.delivery_dining_outlined),
+                title: p.fullName ?? 'Unnamed rider',
+                subtitle: '${p.vehicleType.replaceAll('_', ' ')}'
+                    '${p.vehiclePlate != null ? ' · ${p.vehiclePlate}' : ''}'
+                    ' · ${p.documents.length} documents',
+                trailing: const Icon(Icons.chevron_right_rounded,
+                    color: SfColors.inkFaint),
+                onTap: () =>
+                    Navigator.pushNamed(context, '/rider', arguments: p.id),
               ),
-      ),
-    );
-  }
+            ),
+          );
+        },
+      );
+}
+
+class _Avatar extends StatelessWidget {
+  const _Avatar({required this.icon});
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 44,
+        height: 44,
+        decoration: const BoxDecoration(
+            color: SfColors.accentSoft, shape: BoxShape.circle),
+        child: Icon(icon, color: SfColors.accentStrong, size: 22),
+      );
 }
 
 class _Line extends StatelessWidget {
@@ -254,11 +286,12 @@ class _Line extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.symmetric(vertical: SfSpace.xxs),
         child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(icon, size: 16, color: AppTheme.mgray),
-          const SizedBox(width: 8),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+          Icon(icon, size: 18, color: SfColors.inkMuted),
+          const SizedBox(width: SfSpace.xs),
+          Expanded(
+              child: Text(text, style: Theme.of(context).textTheme.bodyMedium)),
         ]),
       );
 }
@@ -287,25 +320,18 @@ class _ApproveRejectRowState extends State<ApproveRejectRow> {
 
   @override
   Widget build(BuildContext context) {
-    if (_busy) {
-      return const Center(
-          child: CircularProgressIndicator(color: AppTheme.accent));
-    }
+    if (_busy) return const SizedBox(height: 52, child: SfLoader());
     return Row(children: [
       Expanded(
-        child: OutlinedButton(
-          onPressed: () => _run(widget.onReject),
-          style: OutlinedButton.styleFrom(foregroundColor: AppTheme.red),
-          child: const Text('Reject'),
-        ),
+        child: SfButton.destructive(
+            label: 'Reject', onPressed: () => _run(widget.onReject)),
       ),
-      const SizedBox(width: 12),
+      const SizedBox(width: SfSpace.sm),
       Expanded(
-        child: ElevatedButton(
-          onPressed: () => _run(widget.onApprove),
-          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.green),
-          child: const Text('Approve'),
-        ),
+        child: SfButton.primary(
+            label: 'Approve',
+            icon: Icons.check_rounded,
+            onPressed: () => _run(widget.onApprove)),
       ),
     ]);
   }

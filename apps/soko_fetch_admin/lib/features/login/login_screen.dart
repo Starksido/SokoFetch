@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/errors.dart';
 import '../../core/session.dart';
-import '../../core/theme.dart';
+import '../../core/ui/ui.dart';
 
 /// Admin login: phone number, then the code sent by SMS. Only admin
 /// accounts receive a code; there is no sign-up here.
@@ -69,36 +69,34 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
+      backgroundColor: SfColors.surface2,
       body: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(SfSpace.md),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400),
+            constraints: const BoxConstraints(maxWidth: 420),
             child: Card(
               child: Padding(
-                padding: const EdgeInsets.all(28),
+                padding: const EdgeInsets.all(SfSpace.xl),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Icon(Icons.admin_panel_settings_outlined,
-                        size: 48, color: AppTheme.accent),
-                    const SizedBox(height: 12),
-                    const Text('Soko Fetch Admin',
+                    const Center(child: SokoMark(size: 56)),
+                    const SizedBox(height: SfSpace.md),
+                    Text('Soko Fetch Admin',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            color: AppTheme.brand)),
-                    const SizedBox(height: 6),
+                        style: text.headlineSmall),
+                    const SizedBox(height: SfSpace.xs),
                     Text(
                       _codeSent
                           ? 'If $_phone is an admin number, a code has been sent to it.'
                           : 'Sign in with your admin phone number.',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: AppTheme.mgray),
+                      style: text.bodyMedium,
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: SfSpace.lg),
                     TextField(
                       controller: _phoneCtrl,
                       enabled: !_codeSent && !_loading,
@@ -114,7 +112,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       onSubmitted: (_) => _sendCode(),
                     ),
                     if (_codeSent) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: SfSpace.sm),
                       TextField(
                         controller: _codeCtrl,
                         autofocus: true,
@@ -131,34 +129,30 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ],
                     if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Text(_error!, style: const TextStyle(color: AppTheme.red)),
+                      const SizedBox(height: SfSpace.sm),
+                      InlineMessage(_error!),
                     ],
-                    const SizedBox(height: 20),
-                    SizedBox(
-                      height: 48,
-                      child: ElevatedButton(
-                        onPressed: _loading ? null : (_codeSent ? _logIn : _sendCode),
-                        child: _loading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                    color: Colors.white, strokeWidth: 2))
-                            : Text(_codeSent ? 'Sign in' : 'Send code'),
-                      ),
+                    const SizedBox(height: SfSpace.lg),
+                    SfButton.primary(
+                      label: _codeSent ? 'Sign in' : 'Send code',
+                      loading: _loading,
+                      onPressed: _codeSent ? _logIn : _sendCode,
                     ),
-                    if (_codeSent)
-                      TextButton(
-                        onPressed: _loading
-                            ? null
-                            : () => setState(() {
-                                  _codeSent = false;
-                                  _codeCtrl.clear();
-                                  _error = null;
-                                }),
-                        child: const Text('Use a different number'),
+                    if (_codeSent) ...[
+                      const SizedBox(height: SfSpace.xs),
+                      Center(
+                        child: SfButton.text(
+                          label: 'Use a different number',
+                          onPressed: _loading
+                              ? null
+                              : () => setState(() {
+                                    _codeSent = false;
+                                    _codeCtrl.clear();
+                                    _error = null;
+                                  }),
+                        ),
                       ),
+                    ],
                   ],
                 ),
               ),

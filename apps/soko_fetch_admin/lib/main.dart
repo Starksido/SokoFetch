@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/config.dart';
 import 'core/session.dart';
 import 'core/theme.dart';
+import 'core/ui/ui.dart';
 import 'features/login/login_screen.dart';
 import 'features/review/admin_home_screen.dart';
 import 'features/review/rider_review_screen.dart';
@@ -37,7 +38,7 @@ class AdminApp extends StatelessWidget {
         theme: AppTheme.light,
         // Keep content readable on wide desktop screens
         builder: (context, child) => ColoredBox(
-          color: AppTheme.lgray,
+          color: SfColors.surface2,
           child: Center(
             child: ConstrainedBox(
               constraints:
@@ -65,9 +66,7 @@ class AuthGate extends StatelessWidget {
         future: Session.isLoggedIn,
         builder: (_, snap) {
           if (!snap.hasData) {
-            return const Scaffold(
-                body: Center(
-                    child: CircularProgressIndicator(color: AppTheme.accent)));
+            return const Scaffold(body: SfLoader());
           }
           return snap.data! ? const AdminHomeScreen() : const LoginScreen();
         },
