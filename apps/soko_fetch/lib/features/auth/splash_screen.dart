@@ -8,7 +8,8 @@ import 'auth_service.dart';
 /// Decides where the app opens: the welcome screen, or the signed-in
 /// user's area (after a device unlock for customers who have one set up).
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key, this.delay = const Duration(milliseconds: 1200)});
+  const SplashScreen(
+      {super.key, this.delay = const Duration(milliseconds: 1200)});
 
   final Duration delay;
 
@@ -63,7 +64,8 @@ class _SplashScreenState extends State<SplashScreen>
     try {
       destination = await AuthService.instance.landingRoute(role);
     } catch (_) {
-      destination = AuthService.homeRoute(role); // Offline etc. — screens show their own errors
+      // Offline etc. — screens show their own errors
+      destination = AuthService.homeRoute(role);
     }
     _go(destination);
   }
@@ -87,41 +89,44 @@ class _SplashScreenState extends State<SplashScreen>
       body: FadeTransition(
         opacity: _fade,
         child: SafeArea(
-          child: Column(
-            children: [
-              const Spacer(),
-              const SokoMark(size: 88, inverted: true),
-              const SizedBox(height: SfSpace.lg),
-              const SokoWordmark(color: Colors.white, size: 30),
-              const SizedBox(height: SfSpace.xs),
-              Text('Your local shops, delivered',
-                  style: text.bodyLarge!.copyWith(color: Colors.white)),
-              const Spacer(),
-              Padding(
-                padding: const EdgeInsets.all(SfSpace.lg),
-                child: _locked
-                    ? Column(children: [
-                        SfButton.primary(
-                          label: 'Unlock',
-                          icon: Icons.lock_open_rounded,
-                          onPressed: _unlock,
+          child: SizedBox(
+            width: double.infinity,
+            child: Column(
+              children: [
+                const Spacer(),
+                const SokoMark(size: 88, inverted: true),
+                const SizedBox(height: SfSpace.lg),
+                const SokoWordmark(color: Colors.white, size: 30),
+                const SizedBox(height: SfSpace.xs),
+                Text('Your local shops, delivered',
+                    style: text.bodyLarge!.copyWith(color: Colors.white)),
+                const Spacer(),
+                Padding(
+                  padding: const EdgeInsets.all(SfSpace.lg),
+                  child: _locked
+                      ? Column(children: [
+                          SfButton.primary(
+                            label: 'Unlock',
+                            icon: Icons.lock_open_rounded,
+                            onPressed: _unlock,
+                          ),
+                          const SizedBox(height: SfSpace.xs),
+                          TextButton(
+                            onPressed: Session.logout,
+                            style: TextButton.styleFrom(
+                                foregroundColor: Colors.white),
+                            child: const Text('Use another account'),
+                          ),
+                        ])
+                      : const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2.5),
                         ),
-                        const SizedBox(height: SfSpace.xs),
-                        TextButton(
-                          onPressed: Session.logout,
-                          style: TextButton.styleFrom(
-                              foregroundColor: Colors.white),
-                          child: const Text('Use another account'),
-                        ),
-                      ])
-                    : const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5),
-                      ),
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

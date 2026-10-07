@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:soko_fetch/core/theme.dart';
 import 'package:soko_fetch/core/ui/ui.dart';
 import 'package:soko_fetch/features/auth/otp_screen.dart';
 import 'package:soko_fetch/features/auth/role_picker_screen.dart';
+import 'package:soko_fetch/features/auth/splash_screen.dart';
 import 'package:soko_fetch/features/auth/welcome_screen.dart';
 
 import 'ui_helpers.dart';
@@ -35,6 +37,19 @@ void main() {
       // Unknown statuses still read sensibly
       expect(orderStatusStyle('on_hold').$1, 'on hold');
     });
+  });
+
+  testWidgets('splash logo and tagline are centred', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    const size = Size(360, 800);
+    await pumpAt(tester, const SplashScreen(delay: Duration(seconds: 1)), size);
+    for (final f in [
+      find.byType(SokoMark),
+      find.text('Your local shops, delivered'),
+    ]) {
+      expect(tester.getCenter(f).dx, closeTo(size.width / 2, 1));
+    }
+    await tester.pumpAndSettle(const Duration(seconds: 2)); // Let it move on
   });
 
   testWidgets('bottom bar shows count, label and price, and can be disabled',
