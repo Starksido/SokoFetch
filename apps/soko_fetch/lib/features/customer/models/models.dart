@@ -284,3 +284,59 @@ class OrderTracking {
         longitude:       j['longitude'] != null ? parseNum(j['longitude']) : null,
       );
 }
+
+// ── Customer profile (GET /customer/me) ─────────────────────────────────────
+class CustomerProfile {
+  final String id;
+  final String? fullName;
+  final String? email;
+  final bool googleVerified;
+
+  const CustomerProfile(
+      {required this.id, this.fullName, this.email, this.googleVerified = false});
+
+  factory CustomerProfile.fromJson(Map<String, dynamic> j) => CustomerProfile(
+        id: j['id'] as String,
+        fullName: j['full_name'] as String?,
+        email: j['email'] as String?,
+        googleVerified: j['google_verified'] as bool? ?? false,
+      );
+}
+
+// ── Saved delivery address (/customer/addresses) ────────────────────────────
+class DeliveryAddress {
+  final String id;
+  final String label;
+  final String addressLine;
+  final String city;
+  final double? latitude;
+  final double? longitude;
+  final String? instructions;
+  final bool isDefault;
+
+  const DeliveryAddress({
+    required this.id,
+    required this.label,
+    required this.addressLine,
+    required this.city,
+    this.latitude,
+    this.longitude,
+    this.instructions,
+    this.isDefault = false,
+  });
+
+  String get fullAddress =>
+      city.isEmpty || addressLine.contains(city) ? addressLine : '$addressLine, $city';
+
+  factory DeliveryAddress.fromJson(Map<String, dynamic> j) => DeliveryAddress(
+        id: j['id'] as String,
+        label: j['label'] as String,
+        addressLine: j['address_line'] as String,
+        city: j['city'] as String? ?? '',
+        latitude: j['latitude'] != null ? parseNum(j['latitude']) : null,
+        longitude: j['longitude'] != null ? parseNum(j['longitude']) : null,
+        instructions: j['instructions'] as String?,
+        isDefault: j['is_default'] as bool? ?? false,
+      );
+}
+

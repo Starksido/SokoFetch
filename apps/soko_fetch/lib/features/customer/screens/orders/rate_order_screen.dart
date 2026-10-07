@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_rating_bar/flutter_rating_bar.dart';
-import '../../../../core/theme.dart';
+
 import '../../../../core/api_client.dart';
+import '../../../../core/errors.dart';
+import '../../../../core/ui/ui.dart';
 
 class RateOrderScreen extends StatefulWidget {
   const RateOrderScreen({super.key});
@@ -10,10 +12,11 @@ class RateOrderScreen extends StatefulWidget {
 }
 
 class _RateOrderScreenState extends State<RateOrderScreen> {
-  double _courierRating  = 5;
+  double _courierRating = 5;
   double _merchantRating = 5;
   final _reviewCtrl = TextEditingController();
   bool _submitting = false;
+  String? _error;
 
   @override
   void dispose() {
@@ -22,118 +25,107 @@ class _RateOrderScreenState extends State<RateOrderScreen> {
   }
 
   Future<void> _submit() async {
-    final orderId =
-        ModalRoute.of(context)!.settings.arguments as String;
-    setState(() => _submitting = true);
+    final orderId = ModalRoute.of(context)!.settings.arguments as String;
+    setState(() { _submitting = true; _error = null; });
     try {
       await ApiClient.instance.post('/orders/$orderId/rate', data: {
-        'courier_rating':  _courierRating.round(),
+        'courier_rating': _courierRating.round(),
         'merchant_rating': _merchantRating.round(),
-        'review':          _reviewCtrl.text.trim().isEmpty
-            ? null
-            : _reviewCtrl.text.trim(),
+        'review': _reviewCtrl.text.trim().isEmpty ? null : _reviewCtrl.text.trim(),
       });
       if (!mounted) return;
-      Navigator.pushReplacementNamed(context, '/customer');
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Thanks for your feedback!')),
-      );
-    } catch (_) {
-      setState(() => _submitting = false);
+          const SnackBar(content: Text('Thanks for your feedback!')));
+      Navigator.pushNamedAndRemoveUntil(context, '/customer', (_) => false);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _error = errorMessage(e, "Couldn't send your rating.");
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Rate Your Experience')),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          const Icon(Icons.star_rounded, size: 64, color: AppTheme.gold),
-          const SizedBox(height: 12),
-          const Text('How was your delivery?',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                  fontWeight: FontWeight.bold, fontSize: 20)),
-          const SizedBox(height: 32),
-          _RatingSection(
-            title: 'Rate your rider',
-            value: _courierRating,
-            onChanged: (v) => setState(() => _courierRating = v),
-          ),
-          const SizedBox(height: 24),
-          _RatingSection(
-            title: 'Rate the restaurant / shop',
-            value: _merchantRating,
-            onChanged: (v) => setState(() => _merchantRating = v),
-          ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: _reviewCtrl,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: 'Leave a comment (optional)',
-              filled: true,
-              fillColor: Colors.white,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none),
-            ),
-          ),
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: _submitting ? null : _submit,
-            style: ElevatedButton.styleFrom(
-                minimumSize: const Size.fromHeight(52)),
-            child: _submitting
-                ? const SizedBox(
-                    width: 22, height: 22,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2.5))
-                : const Text('Submit Rating'),
-          ),
-          const SizedBox(height: 12),
+      appBar: AppBar(
+        actions: [
           TextButton(
-            onPressed: () => Navigator.pushReplacementNamed(context, '/customer'),
-            child: const Text('Skip',
-                style: TextStyle(color: AppTheme.mgray)),
+            onPressed: () =>
+                Navigator.pushNamedAndRemoveUntil(context, '/customer', (_) => false),
+            child: const Text('Skip'),
           ),
         ],
+      ),
+      bottomNavigationBar: BottomCtaBar(
+          label: 'Send rating', loading: _submitting, onPressed: _submit),
+      body: MaxWidth(
+        maxWidth: 520,
+        child: ListView(
+          padding: const EdgeInsets.all(SfSpace.lg),
+          children: [
+            Text('How did it go?', style: text.headlineMedium),
+            const SizedBox(height: SfSpace.xs),
+            Text('Your rating helps riders and shops do better.',
+                style: text.bodyLarge!.copyWith(color: SfColors.inkMuted)),
+            const SizedBox(height: SfSpace.xl),
+            _RatingRow(
+              title: 'Your rider',
+              value: _courierRating,
+              onChanged: (v) => setState(() => _courierRating = v),
+            ),
+            const SizedBox(height: SfSpace.lg),
+            _RatingRow(
+              title: 'The shop',
+              value: _merchantRating,
+              onChanged: (v) => setState(() => _merchantRating = v),
+            ),
+            const SizedBox(height: SfSpace.xl),
+            TextField(
+              controller: _reviewCtrl,
+              maxLines: 3,
+              maxLength: 500,
+              textCapitalization: TextCapitalization.sentences,
+              decoration:
+                  const InputDecoration(hintText: 'Anything to add? (optional)'),
+            ),
+            if (_error != null) InlineMessage(_error!),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _RatingSection extends StatelessWidget {
+class _RatingRow extends StatelessWidget {
+  const _RatingRow(
+      {required this.title, required this.value, required this.onChanged});
+
   final String title;
   final double value;
   final ValueChanged<double> onChanged;
-  const _RatingSection(
-      {required this.title,
-      required this.value,
-      required this.onChanged});
 
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16)),
-        child: Column(children: [
-          Text(title,
-              style: const TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 12),
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: SfSpace.xs),
           RatingBar.builder(
             initialRating: value,
             minRating: 1,
             allowHalfRating: false,
             itemCount: 5,
-            itemSize: 40,
+            itemSize: 44,
+            itemPadding: const EdgeInsets.only(right: SfSpace.xxs),
+            unratedColor: SfColors.surface3,
             itemBuilder: (_, __) =>
-                const Icon(Icons.star_rounded, color: AppTheme.gold),
+                const Icon(Icons.star_rounded, color: SfColors.rating),
             onRatingUpdate: onChanged,
           ),
-        ]),
+        ],
       );
 }

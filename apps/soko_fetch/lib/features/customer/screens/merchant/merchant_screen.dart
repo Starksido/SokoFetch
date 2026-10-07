@@ -1,545 +1,482 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../../core/theme.dart';
+import '../../../../core/ui/ui.dart';
 import '../../models/models.dart';
 import '../../providers/providers.dart';
+import '../../widgets/categories.dart';
 
+/// A shop's page: photo header, details, sticky menu categories, menu rows.
 class MerchantScreen extends ConsumerWidget {
   const MerchantScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final merchantId = ModalRoute.of(context)!.settings.arguments as String;
-    final merchantAsync = ref.watch(merchantDetailProvider(merchantId));
-    final cart = ref.watch(cartProvider);
-    final cartNotifier = ref.read(cartProvider.notifier);
-
-    return merchantAsync.when(
-      loading: () => const Scaffold(
-        body: Center(child: CircularProgressIndicator(color: AppTheme.accent)),
-      ),
+    final shop = ref.watch(merchantDetailProvider(merchantId));
+    return shop.when(
+      loading: () => Scaffold(appBar: AppBar(), body: const LoadingList()),
       error: (e, _) => Scaffold(
         appBar: AppBar(),
-        body: Center(child: Text('Error: $e')),
+        body: ErrorState(
+            onRetry: () => ref.invalidate(merchantDetailProvider(merchantId))),
       ),
-      data: (merchant) {
-        final grouped = <String, List<MenuItem>>{};
-        for (final item in merchant.menuItems) {
-          grouped.putIfAbsent(item.category, () => []).add(item);
-        }
-
-        final subtotal =
-            cartNotifier.merchantId == merchantId ? cartNotifier.subtotal : 0.0;
-        final totalItems =
-            cartNotifier.merchantId == merchantId ? cartNotifier.totalItems : 0;
-
-        return Scaffold(
-          backgroundColor: AppTheme.lgray,
-          body: CustomScrollView(
-            slivers: [
-              SliverAppBar(
-                expandedHeight: 220,
-                pinned: true,
-                backgroundColor: AppTheme.lgray,
-                foregroundColor: AppTheme.brand,
-                title: const Text('Soko Fetch'),
-                actions: [
-                  IconButton(
-                    tooltip: 'Share',
-                    onPressed: () {},
-                    icon: const Icon(Icons.share_outlined),
-                  ),
-                ],
-                flexibleSpace: FlexibleSpaceBar(
-                  background: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      merchant.bannerUrl != null
-                          ? CachedNetworkImage(
-                              imageUrl: merchant.bannerUrl!,
-                              fit: BoxFit.cover,
-                              errorWidget: (_, __, ___) =>
-                                  _HeroFallback(category: merchant.category),
-                            )
-                          : _HeroFallback(category: merchant.category),
-                      const DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [Colors.transparent, Color(0x99000000)],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Transform.translate(
-                  offset: const Offset(0, -28),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _ShopInfoCard(merchant: merchant),
-                  ),
-                ),
-              ),
-              if (grouped.isEmpty)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(
-                      child: Text(
-                        'This shop has not added menu items yet.',
-                        style: TextStyle(color: AppTheme.mgray),
-                      ),
-                    ),
-                  ),
-                )
-              else
-                for (final entry in grouped.entries) ...[
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _label(entry.key),
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w800,
-                                color: AppTheme.brand,
-                              ),
-                            ),
-                          ),
-                          const Text(
-                            'See All',
-                            style: TextStyle(
-                              color: AppTheme.accent,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                    sliver: SliverGrid(
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        mainAxisSpacing: 14,
-                        crossAxisSpacing: 14,
-                        childAspectRatio: 0.72,
-                      ),
-                      delegate: SliverChildBuilderDelegate(
-                        (_, i) {
-                          final item = entry.value[i];
-                          final qty = cart
-                              .where((c) => c.item.id == item.id)
-                              .fold(0, (sum, c) => sum + c.quantity);
-                          return _MenuItemCard(
-                            item: item,
-                            qty: qty,
-                            onAdd: () => cartNotifier.addItem(item, merchantId),
-                            onRemove: () =>
-                                cartNotifier.updateQuantity(item.id, qty - 1),
-                          );
-                        },
-                        childCount: entry.value.length,
-                      ),
-                    ),
-                  ),
-                ],
-              const SliverToBoxAdapter(child: SizedBox(height: 108)),
-            ],
-          ),
-          bottomNavigationBar: subtotal > 0
-              ? SafeArea(
-                  minimum: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                  child: ElevatedButton(
-                    onPressed: () => Navigator.pushNamed(context, '/customer/checkout'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryContainer,
-                      foregroundColor: const Color(0xFF5F1900),
-                      minimumSize: const Size.fromHeight(56),
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          width: 32,
-                          height: 32,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF5F1900),
-                            borderRadius: BorderRadius.circular(9),
-                          ),
-                          child: Text(
-                            '$totalItems',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'View Cart',
-                                style: TextStyle(fontWeight: FontWeight.w800),
-                              ),
-                              Text(
-                                'Ready for checkout',
-                                style: TextStyle(fontSize: 11),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          'KES ${subtotal.toStringAsFixed(0)}',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              : null,
-        );
-      },
+      data: (m) => _ShopView(shop: m),
     );
-  }
-
-  static String _label(String raw) {
-    return raw
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((word) =>
-            word.isEmpty ? word : word[0].toUpperCase() + word.substring(1))
-        .join(' ');
   }
 }
 
-class _ShopInfoCard extends StatelessWidget {
-  final Merchant merchant;
-
-  const _ShopInfoCard({required this.merchant});
+class _ShopView extends ConsumerStatefulWidget {
+  const _ShopView({required this.shop});
+  final Merchant shop;
 
   @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        merchant.shopName,
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.brand,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        merchant.address,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.mgray,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: AppTheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.star_rounded,
-                          color: AppTheme.teal, size: 18),
-                      const SizedBox(width: 4),
-                      Text(
-                        merchant.rating.toStringAsFixed(1),
-                        style: const TextStyle(
-                          color: AppTheme.teal,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _Tag(label: MerchantScreen._label(merchant.category)),
-                const _Tag(label: 'Fast Delivery'),
-                if (merchant.minOrderAmount > 0)
-                  _Tag(
-                      label:
-                          'Min KES ${merchant.minOrderAmount.toStringAsFixed(0)}'),
-              ],
-            ),
-            const SizedBox(height: 16),
-            const Divider(height: 1),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                const Icon(Icons.schedule_rounded,
-                    color: AppTheme.mgray, size: 20),
-                const SizedBox(width: 8),
-                Text(
-                  '${merchant.avgPrepMinutes}-25 mins',
-                  style: const TextStyle(
-                    color: AppTheme.mgray,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const Spacer(),
-                const Icon(Icons.pedal_bike_rounded,
-                    color: AppTheme.mgray, size: 20),
-                const SizedBox(width: 8),
-                const Text(
-                  'KSh 50 Delivery',
-                  style: TextStyle(
-                    color: AppTheme.mgray,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ],
+  ConsumerState<_ShopView> createState() => _ShopViewState();
+}
+
+class _ShopViewState extends ConsumerState<_ShopView> {
+  static const _heroHeight = 220.0;
+  static const _barHeight = 52.0;
+
+  final _scroll = ScrollController();
+  late final Map<String, List<MenuItem>> _sections;
+  late final Map<String, GlobalKey> _keys;
+  String? _active;
+  bool _collapsed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _sections = {};
+    for (final item in widget.shop.menuItems) {
+      _sections.putIfAbsent(item.category, () => []).add(item);
+    }
+    _keys = {for (final c in _sections.keys) c: GlobalKey()};
+    _active = _sections.keys.isEmpty ? null : _sections.keys.first;
+    _scroll.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  double get _pinnedTop =>
+      MediaQuery.paddingOf(context).top + kToolbarHeight + _barHeight;
+
+  void _onScroll() {
+    final collapsed = _scroll.offset > _heroHeight - kToolbarHeight - 8;
+    String? active = _active;
+    for (final entry in _keys.entries) {
+      final box = entry.value.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.attached) continue;
+      if (box.localToGlobal(Offset.zero).dy <= _pinnedTop + SfSpace.lg) {
+        active = entry.key;
+      }
+    }
+    if (collapsed != _collapsed || active != _active) {
+      setState(() {
+        _collapsed = collapsed;
+        _active = active;
+      });
+    }
+  }
+
+  void _jumpTo(String category) {
+    final box = _keys[category]?.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final target = _scroll.offset + box.localToGlobal(Offset.zero).dy - _pinnedTop;
+    _scroll.animateTo(target.clamp(0, _scroll.position.maxScrollExtent),
+        duration: const Duration(milliseconds: 350), curve: Curves.easeOutCubic);
+  }
+
+  /// Adding from this shop when the cart holds another shop's items.
+  Future<bool> _confirmNewCart() async {
+    final cart = ref.read(cartProvider.notifier);
+    if (!cart.belongsToOtherShop(widget.shop.id)) return true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Start a new cart?'),
+        content: Text(
+            'Your cart has items from another shop. Adding this will clear them '
+            'and start a cart from ${widget.shop.shopName}.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep my cart')),
+          TextButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Start new cart')),
+        ],
+      ),
+    );
+    return ok ?? false;
+  }
+
+  Future<void> _setQty(MenuItem item, int qty) async {
+    if (qty > 0 && !await _confirmNewCart()) return;
+    ref.read(cartProvider.notifier).setQuantity(item, widget.shop.id, qty);
+  }
+
+  void _openItem(MenuItem item) => showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (_) => _ItemSheet(
+          item: item,
+          canOrder: widget.shop.isOpen && item.isAvailable,
+          initialQty: ref.read(cartProvider.notifier).quantityOf(item.id),
+          onConfirm: (qty) => _setQty(item, qty),
         ),
-      ),
-    );
-  }
-}
-
-class _MenuItemCard extends StatelessWidget {
-  final MenuItem item;
-  final int qty;
-  final VoidCallback onAdd;
-  final VoidCallback onRemove;
-
-  const _MenuItemCard({
-    required this.item,
-    required this.qty,
-    required this.onAdd,
-    required this.onRemove,
-  });
+      );
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: SizedBox(
-              width: double.infinity,
-              child: item.photoUrl != null
-                  ? CachedNetworkImage(
-                      imageUrl: item.photoUrl!,
-                      fit: BoxFit.cover,
-                      errorWidget: (_, __, ___) => _thumb(),
-                    )
-                  : _thumb(),
+    final shop = widget.shop;
+    final text = Theme.of(context).textTheme;
+    ref.watch(cartProvider); // Rebuild steppers and the cart bar
+    final cart = ref.read(cartProvider.notifier);
+    final inThisShop = cart.merchantId == shop.id;
+    final category = categoryOf(shop.category);
+
+    return Scaffold(
+      bottomNavigationBar: inThisShop && cart.totalItems > 0
+          ? BottomCtaBar(
+              label: 'View cart',
+              count: cart.totalItems,
+              amount: cart.subtotal,
+              onPressed: () => Navigator.pushNamed(context, '/customer/cart'),
+            )
+          : null,
+      body: CustomScrollView(
+        controller: _scroll,
+        slivers: [
+          SliverAppBar(
+            pinned: true,
+            expandedHeight: _heroHeight,
+            leading: Padding(
+              padding: const EdgeInsets.all(SfSpace.xs),
+              child: SfCircleButton(
+                icon: Icons.arrow_back_rounded,
+                tooltip: 'Back',
+                onPressed: () => Navigator.maybePop(context),
+              ),
+            ),
+            title: AnimatedOpacity(
+              opacity: _collapsed ? 1 : 0,
+              duration: const Duration(milliseconds: 150),
+              child: Text(shop.shopName, overflow: TextOverflow.ellipsis),
+            ),
+            flexibleSpace: FlexibleSpaceBar(
+              background: SfNetworkImage(
+                url: shop.bannerUrl,
+                radius: 0,
+                fallbackIcon: category.icon,
+                fallbackLabel: shop.shopName,
+              ),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  item.description ?? MerchantScreen._label(item.category),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppTheme.mgray,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  SfSpace.md, SfSpace.md, SfSpace.md, SfSpace.xs),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(shop.shopName, style: text.headlineMedium),
+                const SizedBox(height: SfSpace.xs),
+                Wrap(
+                  spacing: SfSpace.xs,
+                  runSpacing: SfSpace.xs,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Expanded(
-                      child: Text(
-                        'KSh ${item.effectivePrice.toStringAsFixed(0)}',
-                        style: const TextStyle(
-                          color: AppTheme.accent,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    qty == 0
-                        ? _RoundAction(
-                            icon: Icons.add_rounded,
-                            onTap: item.isAvailable ? onAdd : null,
-                          )
-                        : Row(
-                            children: [
-                              _TinyAction(
-                                  icon: Icons.remove_rounded, onTap: onRemove),
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(horizontal: 6),
-                                child: Text(
-                                  '$qty',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w800),
-                                ),
-                              ),
-                              _TinyAction(
-                                  icon: Icons.add_rounded, onTap: onAdd),
-                            ],
-                          ),
+                    RatingBadge(rating: shop.rating, count: shop.ratingCount),
+                    StatusPill(shop.isOpen ? 'Open' : 'Closed',
+                        tone: shop.isOpen ? PillTone.success : PillTone.neutral),
+                    StatusPill('${shop.avgPrepMinutes} min prep',
+                        icon: Icons.schedule_rounded),
+                    if (shop.minOrderAmount > 0)
+                      StatusPill('Min. ${formatKes(shop.minOrderAmount)}'),
                   ],
                 ),
-              ],
+                const SizedBox(height: SfSpace.sm),
+                Row(children: [
+                  const Icon(Icons.place_outlined,
+                      size: 18, color: SfColors.inkMuted),
+                  const SizedBox(width: SfSpace.xxs),
+                  Expanded(
+                    child: Text(shop.address,
+                        style: text.bodyMedium,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                ]),
+                if (!shop.isOpen) ...[
+                  const SizedBox(height: SfSpace.sm),
+                  const InlineMessage(
+                    "This shop is closed right now. You can look at the menu "
+                    'and order once it opens.',
+                    isError: false,
+                  ),
+                ],
+              ]),
             ),
           ),
+          if (_sections.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: EmptyState(
+                icon: Icons.menu_book_outlined,
+                title: 'No menu yet',
+                message: "This shop hasn't added any items.",
+              ),
+            )
+          else ...[
+            SliverPersistentHeader(
+              pinned: true,
+              delegate: _CategoryBar(
+                height: _barHeight,
+                categories: _sections.keys.toList(),
+                active: _active,
+                onTap: _jumpTo,
+              ),
+            ),
+            // One box so every section exists (and can be scrolled to)
+            SliverToBoxAdapter(
+              child: Column(children: [
+                for (final entry in _sections.entries) ...[
+                  Padding(
+                    key: _keys[entry.key],
+                    padding: const EdgeInsets.fromLTRB(
+                        SfSpace.md, SfSpace.lg, SfSpace.md, SfSpace.xs),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(menuCategoryLabel(entry.key),
+                          style: text.titleLarge),
+                    ),
+                  ),
+                  for (final item in entry.value) ...[
+                    _MenuRow(
+                      item: item,
+                      quantity: inThisShop ? cart.quantityOf(item.id) : 0,
+                      canOrder: shop.isOpen && item.isAvailable,
+                      onTap: () => _openItem(item),
+                      onQuantity: (q) => _setQty(item, q),
+                    ),
+                    const Divider(indent: SfSpace.md, endIndent: SfSpace.md),
+                  ],
+                ],
+                const SizedBox(height: SfSpace.xxl),
+              ]),
+            ),
+          ],
         ],
       ),
     );
   }
-
-  Widget _thumb() {
-    return Container(
-      color: AppTheme.primaryFixed,
-      child: Icon(Icons.shopping_basket_rounded,
-          color: AppTheme.accent.withValues(alpha: 0.45), size: 42),
-    );
-  }
 }
 
-class _Tag extends StatelessWidget {
-  final String label;
+class _CategoryBar extends SliverPersistentHeaderDelegate {
+  _CategoryBar({required this.height, required this.categories,
+      required this.active, required this.onTap});
 
-  const _Tag({required this.label});
+  final double height;
+  final List<String> categories;
+  final String? active;
+  final ValueChanged<String> onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceHigh,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: AppTheme.mgray,
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-}
-
-class _RoundAction extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  const _RoundAction({required this.icon, required this.onTap});
+  double get minExtent => height;
+  @override
+  double get maxExtent => height;
 
   @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      customBorder: const CircleBorder(),
-      child: Container(
-        width: 34,
-        height: 34,
-        decoration: BoxDecoration(
-          color:
-              onTap == null ? AppTheme.surfaceHigh : AppTheme.primaryContainer,
-          shape: BoxShape.circle,
+  Widget build(BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: SfColors.surface,
+      alignment: Alignment.centerLeft,
+      child: Column(children: [
+        Expanded(
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(
+                horizontal: SfSpace.md, vertical: SfSpace.xs),
+            itemCount: categories.length,
+            separatorBuilder: (_, __) => const SizedBox(width: SfSpace.xs),
+            itemBuilder: (_, i) {
+              final c = categories[i];
+              return ChoiceChip(
+                label: Text(menuCategoryLabel(c)),
+                selected: c == active,
+                onSelected: (_) => onTap(c),
+              );
+            },
+          ),
         ),
-        child: Icon(icon,
-            color: onTap == null ? AppTheme.mgray : const Color(0xFF5F1900)),
-      ),
+        const Divider(),
+      ]),
     );
   }
+
+  @override
+  bool shouldRebuild(_CategoryBar old) =>
+      old.active != active || old.categories != categories;
 }
 
-class _TinyAction extends StatelessWidget {
-  final IconData icon;
+/// Text on the left, square photo on the right with a + / stepper.
+class _MenuRow extends StatelessWidget {
+  const _MenuRow({required this.item, required this.quantity,
+      required this.canOrder, required this.onTap, required this.onQuantity});
+
+  final MenuItem item;
+  final int quantity;
+  final bool canOrder;
   final VoidCallback onTap;
-
-  const _TinyAction({required this.icon, required this.onTap});
+  final ValueChanged<int> onQuantity;
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final discounted = item.effectivePrice < item.price;
+    final stepper = canOrder
+        ? QtyStepper(
+            quantity: quantity, onChanged: onQuantity, onSurface: item.photoUrl != null)
+        : null;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 28,
-        height: 28,
-        decoration: BoxDecoration(
-          color: AppTheme.primaryFixed,
-          borderRadius: BorderRadius.circular(8),
+      child: Opacity(
+        opacity: item.isAvailable ? 1 : 0.5,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: SfSpace.md, vertical: SfSpace.sm),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(item.name, style: text.titleSmall),
+                const SizedBox(height: SfSpace.xxs),
+                Row(children: [
+                  Text(formatKes(item.effectivePrice),
+                      style: text.bodyLarge!.copyWith(
+                          color: discounted ? SfColors.accentStrong : SfColors.ink,
+                          fontWeight: FontWeight.w500)),
+                  if (discounted) ...[
+                    const SizedBox(width: SfSpace.xs),
+                    Text(formatKes(item.price),
+                        style: text.bodyMedium!.copyWith(
+                            decoration: TextDecoration.lineThrough)),
+                  ],
+                ]),
+                if (item.description != null && item.description!.isNotEmpty) ...[
+                  const SizedBox(height: SfSpace.xxs),
+                  Text(item.description!,
+                      style: text.bodyMedium,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
+                ],
+                if (!item.isAvailable) ...[
+                  const SizedBox(height: SfSpace.xs),
+                  const StatusPill('Sold out'),
+                ],
+              ]),
+            ),
+            const SizedBox(width: SfSpace.md),
+            if (item.photoUrl != null)
+              SizedBox(
+                width: 96,
+                height: 96,
+                child: Stack(children: [
+                  SfNetworkImage(
+                    url: item.photoUrl,
+                    width: 96,
+                    height: 96,
+                    radius: SfRadius.md,
+                    fallbackIcon: Icons.shopping_basket_outlined,
+                  ),
+                  if (stepper != null)
+                    Positioned(right: 4, bottom: 4, child: stepper),
+                ]),
+              )
+            else if (stepper != null)
+              stepper,
+          ]),
         ),
-        child: Icon(icon, color: AppTheme.accent, size: 18),
       ),
     );
   }
 }
 
-class _HeroFallback extends StatelessWidget {
-  final String category;
+/// Item details with a quantity picker.
+class _ItemSheet extends StatefulWidget {
+  const _ItemSheet({required this.item, required this.canOrder,
+      required this.initialQty, required this.onConfirm});
 
-  const _HeroFallback({required this.category});
+  final MenuItem item;
+  final bool canOrder;
+  final int initialQty;
+  final ValueChanged<int> onConfirm;
+
+  @override
+  State<_ItemSheet> createState() => _ItemSheetState();
+}
+
+class _ItemSheetState extends State<_ItemSheet> {
+  late int _qty = widget.initialQty > 0 ? widget.initialQty : 1;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: AppTheme.primaryFixed,
-      child: Icon(
-        category == 'pharmacy'
-            ? Icons.medical_services_rounded
-            : Icons.storefront_rounded,
-        size: 90,
-        color: AppTheme.accent.withValues(alpha: 0.35),
+    final text = Theme.of(context).textTheme;
+    final item = widget.item;
+    final updating = widget.initialQty > 0;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(SfSpace.md, 0, SfSpace.md, SfSpace.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (item.photoUrl != null) ...[
+            AspectRatio(
+              aspectRatio: 16 / 10,
+              child: SfNetworkImage(
+                  url: item.photoUrl, fallbackIcon: Icons.shopping_basket_outlined),
+            ),
+            const SizedBox(height: SfSpace.md),
+          ],
+          Text(item.name, style: text.headlineSmall),
+          const SizedBox(height: SfSpace.xxs),
+          Text(formatKes(item.effectivePrice), style: text.titleMedium),
+          if (item.description != null && item.description!.isNotEmpty) ...[
+            const SizedBox(height: SfSpace.sm),
+            Text(item.description!, style: text.bodyLarge),
+          ],
+          const SizedBox(height: SfSpace.lg),
+          if (!widget.canOrder)
+            InlineMessage(
+              item.isAvailable
+                  ? "The shop is closed, so this can't be ordered right now."
+                  : 'Sold out for now.',
+              isError: false,
+            )
+          else ...[
+            Center(
+              child: QtyStepper(
+                quantity: _qty,
+                onChanged: (q) => setState(() => _qty = q),
+              ),
+            ),
+            const SizedBox(height: SfSpace.lg),
+            SfButton.primary(
+              label: _qty == 0
+                  ? 'Remove from cart'
+                  : '${updating ? 'Update' : 'Add'} $_qty · ${formatKes(item.effectivePrice * _qty)}',
+              onPressed: _qty == 0 && !updating
+                  ? null
+                  : () {
+                      widget.onConfirm(_qty);
+                      Navigator.pop(context);
+                    },
+            ),
+          ],
+        ],
       ),
     );
   }

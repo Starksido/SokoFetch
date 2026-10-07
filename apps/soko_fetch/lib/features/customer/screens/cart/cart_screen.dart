@@ -1,154 +1,118 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme.dart';
+
+import '../../../../core/ui/ui.dart';
 import '../../providers/providers.dart';
+import '../../widgets/categories.dart';
 
 class CartScreen extends ConsumerWidget {
   const CartScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cart        = ref.watch(cartProvider);
-    final cartNotifier = ref.read(cartProvider.notifier);
+    final text = Theme.of(context).textTheme;
+    final cart = ref.watch(cartProvider);
+    final notifier = ref.read(cartProvider.notifier);
+    final shopId = notifier.merchantId;
+    final shop = shopId == null ? null : ref.watch(merchantDetailProvider(shopId)).valueOrNull;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Your Cart'),
+        title: const Text('Your cart'),
         actions: [
           if (cart.isNotEmpty)
-            TextButton(
-              onPressed: () {
-                cartNotifier.clear();
-                Navigator.pop(context);
-              },
-              child: const Text('Clear',
-                  style: TextStyle(color: AppTheme.accent)),
-            ),
+            TextButton(onPressed: notifier.clear, child: const Text('Clear')),
         ],
       ),
+      bottomNavigationBar: cart.isEmpty
+          ? null
+          : BottomCtaBar(
+              label: 'Go to checkout',
+              amount: notifier.subtotal,
+              onPressed: () => Navigator.pushNamed(context, '/customer/checkout'),
+            ),
       body: cart.isEmpty
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+          ? EmptyState(
+              icon: Icons.shopping_bag_outlined,
+              title: 'Your cart is empty',
+              message: 'Add items from a shop and they will show up here.',
+              actionLabel: 'Browse shops',
+              onAction: () => Navigator.popUntil(
+                  context, (r) => r.settings.name == '/customer' || r.isFirst),
+            )
+          : MaxWidth(
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: SfSpace.lg),
                 children: [
-                  Icon(Icons.shopping_bag_outlined,
-                      size: 72, color: AppTheme.mgray),
-                  SizedBox(height: 16),
-                  Text('Your cart is empty',
-                      style: TextStyle(
-                          color: AppTheme.mgray, fontSize: 16)),
+                  if (shop != null)
+                    ListRow(
+                      leading: SfNetworkImage(
+                        url: shop.logoUrl ?? shop.bannerUrl,
+                        width: 48,
+                        height: 48,
+                        radius: SfRadius.sm,
+                        fallbackIcon: categoryOf(shop.category).icon,
+                        fallbackLabel: shop.shopName,
+                      ),
+                      title: shop.shopName,
+                      subtitle: shop.address,
+                      trailing: TextButton(
+                        onPressed: () => Navigator.pushNamed(
+                            context, '/customer/shop', arguments: shop.id),
+                        child: const Text('Add items'),
+                      ),
+                    ),
+                  const Divider(),
+                  for (final c in cart) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: SfSpace.md, vertical: SfSpace.sm),
+                      child: Row(children: [
+                        if (c.item.photoUrl != null) ...[
+                          SfNetworkImage(
+                            url: c.item.photoUrl,
+                            width: 56,
+                            height: 56,
+                            radius: SfRadius.sm,
+                            fallbackIcon: Icons.shopping_basket_outlined,
+                          ),
+                          const SizedBox(width: SfSpace.sm),
+                        ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(c.item.name, style: text.titleSmall),
+                              const SizedBox(height: 2),
+                              Text(formatKes(c.lineTotal), style: text.bodyMedium),
+                            ],
+                          ),
+                        ),
+                        QtyStepper(
+                          quantity: c.quantity,
+                          onChanged: (q) => notifier.updateQuantity(c.item.id, q),
+                        ),
+                      ]),
+                    ),
+                    const Divider(indent: SfSpace.md, endIndent: SfSpace.md),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.all(SfSpace.md),
+                    child: Column(children: [
+                      Row(children: [
+                        Expanded(child: Text('Subtotal', style: text.titleSmall)),
+                        Text(formatKes(notifier.subtotal), style: text.titleSmall),
+                      ]),
+                      const SizedBox(height: SfSpace.xxs),
+                      Row(children: [
+                        Expanded(child: Text('Delivery', style: text.bodyMedium)),
+                        Text('Worked out at checkout', style: text.bodyMedium),
+                      ]),
+                    ]),
+                  ),
                 ],
               ),
-            )
-          : Column(children: [
-              Expanded(
-                child: ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: cart.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (_, i) {
-                    final c = cart[i];
-                    return ListTile(
-                      contentPadding:
-                          const EdgeInsets.symmetric(vertical: 8),
-                      title: Text(c.item.name,
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text(
-                          'KES ${c.item.effectivePrice.toStringAsFixed(0)} each'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _QtyBtn(
-                              icon: Icons.remove,
-                              onTap: () => cartNotifier.updateQuantity(
-                                  c.item.id, c.quantity - 1)),
-                          Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 12),
-                            child: Text('${c.quantity}',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16)),
-                          ),
-                          _QtyBtn(
-                              icon: Icons.add,
-                              onTap: () => cartNotifier.updateQuantity(
-                                  c.item.id, c.quantity + 1)),
-                          const SizedBox(width: 12),
-                          Text(
-                              'KES ${c.lineTotal.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: AppTheme.accent)),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-              ),
-              // Summary + checkout
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.06),
-                        blurRadius: 12,
-                        offset: const Offset(0, -4))
-                  ],
-                ),
-                child: Column(children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Subtotal',
-                          style: TextStyle(color: AppTheme.mgray)),
-                      Text(
-                          'KES ${cartNotifier.subtotal.toStringAsFixed(0)}',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  const Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Delivery fee',
-                          style: TextStyle(color: AppTheme.mgray)),
-                      Text('Calculated at checkout',
-                          style: TextStyle(
-                              color: AppTheme.mgray, fontSize: 12)),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () =>
-                        Navigator.pushNamed(context, '/customer/checkout'),
-                    style: ElevatedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(52)),
-                    child: const Text('Proceed to Checkout'),
-                  ),
-                ]),
-              ),
-            ]),
+            ),
     );
   }
-}
-
-class _QtyBtn extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  const _QtyBtn({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 28, height: 28,
-          decoration: BoxDecoration(
-              color: AppTheme.accent.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8)),
-          child: Icon(icon, color: AppTheme.accent, size: 15),
-        ),
-      );
 }

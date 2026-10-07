@@ -10,6 +10,10 @@ class AppConfig {
     defaultValue: 'http://192.168.100.47:8000',
   );
 
+  // Google Maps needs an API key (see README). Until one is configured,
+  // build with this off and map areas show a placeholder instead of a grey grid.
+  static const bool mapsEnabled = bool.fromEnvironment('MAPS_ENABLED');
+
   static const Duration connectTimeout = Duration(seconds: 10);
   static const Duration receiveTimeout = Duration(seconds: 30);
 

@@ -2,7 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../../../../core/api_client.dart';
 import '../../../../core/google_sign_in.dart';
-import '../../../../core/theme.dart';
+import '../../../../core/ui/ui.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -93,168 +93,72 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
     return Scaffold(
-      backgroundColor: Colors.white,
+      bottomNavigationBar: BottomCtaBar(
+          label: 'Continue', loading: _loading, onPressed: _submit),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 48),
-                Container(
-                  width: 52,
-                  height: 52,
-                  decoration: BoxDecoration(
-                    color: AppTheme.accent,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Icon(Icons.person_outline,
-                      color: Colors.white, size: 30),
-                ),
-                const SizedBox(height: 36),
-                Text('Tell us about you',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.brand,
-                        )),
-                const SizedBox(height: 8),
-                Text("Just a couple of details to finish setting up your account.",
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: Colors.black54,
-                        )),
-                const SizedBox(height: 32),
-                TextFormField(
-                  controller: _nameCtrl,
-                  textCapitalization: TextCapitalization.words,
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'Full name',
-                    hintText: 'Jane Wanjiru',
-                    prefixIcon: const Icon(Icons.badge_outlined),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide:
-                          const BorderSide(color: AppTheme.accent, width: 2),
+        child: MaxWidth(
+          maxWidth: 520,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+                SfSpace.lg, SfSpace.xl, SfSpace.lg, SfSpace.lg),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Tell us about you', style: text.headlineMedium),
+                  const SizedBox(height: SfSpace.xs),
+                  Text('Riders and shops use your name for your orders.',
+                      style: text.bodyLarge!.copyWith(color: SfColors.inkMuted)),
+                  const SizedBox(height: SfSpace.xl),
+                  TextFormField(
+                    controller: _nameCtrl,
+                    textCapitalization: TextCapitalization.words,
+                    autofocus: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Full name',
+                      prefixIcon: Icon(Icons.person_outline_rounded),
                     ),
+                    validator: (v) => (v == null || v.trim().length < 2)
+                        ? 'Enter your full name'
+                        : null,
                   ),
-                  validator: (v) {
-                    if (v == null || v.trim().length < 2) {
-                      return 'Enter your full name';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _emailCtrl,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: InputDecoration(
-                    labelText: 'Email address',
-                    hintText: 'jane@example.com',
-                    prefixIcon: const Icon(Icons.email_outlined),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide:
-                          const BorderSide(color: AppTheme.accent, width: 2),
+                  const SizedBox(height: SfSpace.sm),
+                  TextFormField(
+                    controller: _emailCtrl,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      prefixIcon: Icon(Icons.mail_outline_rounded),
                     ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) {
+                        return 'Enter your email address';
+                      }
+                      final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+                      return emailPattern.hasMatch(v.trim())
+                          ? null
+                          : 'Enter a valid email address';
+                    },
                   ),
-                  validator: (v) {
-                    if (v == null || v.trim().isEmpty) {
-                      return 'Enter your email address';
-                    }
-                    final emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-                    if (!emailPattern.hasMatch(v.trim())) {
-                      return 'Enter a valid email address';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 20),
-                OutlinedButton.icon(
-                  onPressed: _googleLoading ? null : _verifyWithGoogle,
-                  icon: _googleLoading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2.5),
-                        )
-                      : Icon(
-                          _googleVerified
-                              ? Icons.check_circle
-                              : Icons.g_mobiledata,
-                          color: _googleVerified
-                              ? Colors.green
-                              : AppTheme.brand,
+                  const SizedBox(height: SfSpace.lg),
+                  _googleVerified
+                      ? const StatusPill('Google account linked',
+                          tone: PillTone.success, icon: Icons.check_rounded)
+                      : SfButton.secondary(
+                          label: 'Fill in with Google',
+                          icon: Icons.g_mobiledata_rounded,
+                          loading: _googleLoading,
+                          onPressed: _verifyWithGoogle,
                         ),
-                  label: Text(
-                    _googleVerified
-                        ? 'Google account verified'
-                        : 'Verify with Google',
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(double.infinity, 50),
-                    side: BorderSide(
-                      color: _googleVerified
-                          ? Colors.green
-                          : Colors.grey.shade300,
-                    ),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppTheme.accent.withValues(alpha: 0.08),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Row(children: [
-                      const Icon(Icons.error_outline,
-                          color: AppTheme.accent, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(_error!,
-                            style: const TextStyle(color: AppTheme.accent)),
-                      ),
-                    ]),
-                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: SfSpace.md),
+                    InlineMessage(_error!),
+                  ],
                 ],
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton(
-                    onPressed: _loading ? null : _submit,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.accent,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                      elevation: 0,
-                    ),
-                    child: _loading
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                                color: Colors.white, strokeWidth: 2.5))
-                        : const Text('Continue',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.w600)),
-                  ),
-                ),
-                const SizedBox(height: 32),
-              ],
+              ),
             ),
           ),
         ),

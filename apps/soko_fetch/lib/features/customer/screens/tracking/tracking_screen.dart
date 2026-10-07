@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import '../../../../core/config.dart';
-import '../../../../core/theme.dart';
+import '../../../../core/ui/ui.dart';
 import '../../models/models.dart';
 import '../../../../core/api_client.dart';
 
@@ -28,15 +28,16 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
 
   final Set<Marker> _markers = {};
 
-  final _statusLabels = const {
-    'pending': 'Waiting for merchant...',
-    'confirmed': 'Order confirmed!',
-    'preparing': 'Merchant is preparing your order',
-    'ready_for_pickup': 'Looking for a rider nearby',
-    'picked_up': 'Rider picked up your order',
-    'in_transit': 'Fetch in progress!',
-    'delivered': 'Delivered!',
+  static const _headlines = {
+    'pending': 'Waiting for the shop',
+    'confirmed': 'Order confirmed',
+    'preparing': 'The shop is preparing your order',
+    'ready_for_pickup': 'Ready for pickup',
+    'picked_up': 'Your rider has your order',
+    'in_transit': 'On the way to you',
+    'delivered': 'Delivered',
     'cancelled': 'Order cancelled',
+    'delivery_failed': "Delivery didn't go through",
   };
 
   @override
@@ -139,165 +140,45 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
     super.dispose();
   }
 
-  String get _riderLine {
-    final t = _tracking;
+  String get _subline {
+    final status = _order?.status ?? _tracking?.status;
     final eta = _order?.estimatedDeliveryAt;
-    final when = eta != null ? ' · arriving ${_formatTime(eta)}' : '';
-    if (t == null || !t.courierAssigned) return 'Waiting for a rider to accept.';
-    final who = t.courierName ?? 'Your rider';
-    return '$who is on the way$when.';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final status = _order?.status ?? _tracking?.status ?? 'pending';
-    final isTerminal = _isTerminal;
-    final riderPos = _tracking?.position;
-
-    return Scaffold(
-      backgroundColor: AppTheme.lgray,
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(
-                target: riderPos ?? const LatLng(-1.2921, 36.8219),
-                zoom: 14,
-              ),
-              markers: _markers,
-              onMapCreated: (controller) => _mapController = controller,
-              myLocationEnabled: true,
-              myLocationButtonEnabled: false,
-              zoomControlsEnabled: false,
-            ),
-          ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => Navigator.maybePop(context),
-                      icon: const Icon(Icons.arrow_back_rounded,
-                          color: AppTheme.accent),
-                    ),
-                    const Text(
-                      'Soko Fetch',
-                      style: TextStyle(
-                        color: AppTheme.accent,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (_order?.canCancel == true)
-                      TextButton(
-                        onPressed: _cancelOrder,
-                        child: const Text('Cancel'),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 62,
-            left: 16,
-            right: 16,
-            child: _MapStatusPill(
-              label: isTerminal
-                  ? (_order?.isDelivered == true
-                      ? 'Fetch delivered'
-                      : 'Fetch ended')
-                  : riderPos != null
-                      ? 'Rider on the move'
-                      : 'Tracking your order',
-              active: !isTerminal,
-            ),
-          ),
-          Positioned(
-            left: 16,
-            right: 16,
-            bottom: 16 + MediaQuery.of(context).padding.bottom,
-            child: _loadingOrder
-                ? const Card(
-                    child: SizedBox(
-                      height: 180,
-                      child: Center(
-                          child: CircularProgressIndicator(
-                              color: AppTheme.accent)),
-                    ),
-                  )
-                : _TrackingSheet(
-                    order: _order,
-                    deliveryCode: _deliveryCode,
-                    statusLabel: _statusLabels[status] ?? status,
-                    subtitle: _riderLine,
-                    progress: _progressFor(status),
-                    isTerminal: isTerminal,
-                    onRate: _order?.isDelivered == true
-                        ? () => Navigator.pushReplacementNamed(
-                              context,
-                              '/customer/rate-order',
-                              arguments: _orderId,
-                            )
-                        : null,
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  double _progressFor(String status) {
-    switch (status) {
-      case 'pending':
-        return 0.12;
-      case 'confirmed':
-        return 0.28;
-      case 'preparing':
-        return 0.45;
-      case 'ready_for_pickup':
-        return 0.58;
-      case 'picked_up':
-        return 0.72;
-      case 'in_transit':
-        return 0.84;
-      case 'delivered':
-        return 1;
-      default:
-        return 0.2;
+    if (status == 'delivered') return 'Enjoy! Let us know how it went.';
+    if (status == 'cancelled' || status == 'delivery_failed') {
+      return _order?.cancellationReason ?? 'Contact support if you were charged.';
     }
+    if (status == 'pending') return 'The shop will confirm your order shortly.';
+    return eta != null ? 'Estimated arrival ${_formatTime(eta)}' : 'Arriving soon';
   }
+
+  /// 0..3: placed, preparing, on the way, delivered
+  int _stepFor(String status) => switch (status) {
+        'pending' || 'confirmed' => 0,
+        'preparing' || 'ready_for_pickup' => 1,
+        'picked_up' || 'in_transit' => 2,
+        'delivered' => 3,
+        _ => 0,
+      };
 
   String _formatTime(DateTime dt) {
     final local = dt.toLocal();
-    final h = local.hour.toString().padLeft(2, '0');
-    final m = local.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
   }
 
   Future<void> _cancelOrder() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Cancel Order'),
-        content: const Text('Are you sure you want to cancel this order?'),
+        title: const Text('Cancel this order?'),
+        content: const Text("The shop hasn't started on it yet, so you can still cancel."),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('No'),
-          ),
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Keep order')),
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Yes, cancel',
-                style: TextStyle(color: AppTheme.accent)),
-          ),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: TextButton.styleFrom(foregroundColor: SfColors.danger),
+              child: const Text('Cancel order')),
         ],
       ),
     );
@@ -307,242 +188,217 @@ class _TrackingScreenState extends ConsumerState<TrackingScreen> {
       _loadOrder();
     } catch (_) {}
   }
-}
-
-class _MapStatusPill extends StatelessWidget {
-  final String label;
-  final bool active;
-
-  const _MapStatusPill({required this.label, required this.active});
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.9),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: AppTheme.outlineVariant.withValues(alpha: 0.5)),
-          boxShadow: const [
-            BoxShadow(
-                color: Color(0x16000000), blurRadius: 12, offset: Offset(0, 4)),
-          ],
+    final text = Theme.of(context).textTheme;
+    final status = _order?.status ?? _tracking?.status ?? 'pending';
+    final riderPos = _tracking?.position;
+    final order = _order;
+
+    return Scaffold(
+      body: Stack(children: [
+        Positioned.fill(
+          bottom: MediaQuery.sizeOf(context).height * 0.4,
+          child: AppConfig.mapsEnabled
+              ? GoogleMap(
+                  initialCameraPosition: CameraPosition(
+                    target: riderPos ?? const LatLng(-1.2921, 36.8219),
+                    zoom: 14,
+                  ),
+                  markers: _markers,
+                  onMapCreated: (c) => _mapController = c,
+                  myLocationButtonEnabled: false,
+                  zoomControlsEnabled: false,
+                )
+              : MapPlaceholder(
+                  icon: riderPos != null
+                      ? Icons.delivery_dining_rounded
+                      : Icons.storefront_rounded),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: active ? AppTheme.teal : AppTheme.mgray,
-                shape: BoxShape.circle,
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(SfSpace.xs),
+            child: Row(children: [
+              SfCircleButton(
+                icon: Icons.arrow_back_rounded,
+                tooltip: 'Back',
+                onPressed: () => Navigator.maybePop(context),
               ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: TextStyle(
-                color: active ? AppTheme.teal : AppTheme.mgray,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
+              const Spacer(),
+              if (order?.canCancel == true)
+                Material(
+                  color: SfColors.surface,
+                  shape: const StadiumBorder(),
+                  child: TextButton(
+                    onPressed: _cancelOrder,
+                    child: const Text('Cancel order'),
+                  ),
+                ),
+            ]),
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class _TrackingSheet extends StatelessWidget {
-  final Order? order;
-  final String? deliveryCode;
-  final String statusLabel;
-  final String subtitle;
-  final double progress;
-  final bool isTerminal;
-  final VoidCallback? onRate;
-
-  const _TrackingSheet({
-    required this.order,
-    this.deliveryCode,
-    required this.statusLabel,
-    required this.subtitle,
-    required this.progress,
-    required this.isTerminal,
-    this.onRate,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+        DraggableScrollableSheet(
+          initialChildSize: 0.5,
+          minChildSize: 0.35,
+          maxChildSize: 0.92,
+          builder: (context, scroll) => DecoratedBox(
+            decoration: const BoxDecoration(
+              color: SfColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(SfRadius.lg)),
+              boxShadow: SfShadow.floating,
+            ),
+            child: _loadingOrder
+                ? const LoadingList(count: 3)
+                : ListView(
+                    controller: scroll,
+                    padding: const EdgeInsets.fromLTRB(
+                        SfSpace.md, SfSpace.xs, SfSpace.md, SfSpace.xl),
                     children: [
-                      Text(
-                        statusLabel,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.brand,
+                      Center(
+                        child: Container(
+                          width: 36,
+                          height: 4,
+                          margin: const EdgeInsets.only(bottom: SfSpace.md),
+                          decoration: const BoxDecoration(
+                              color: SfColors.surface3,
+                              borderRadius: SfRadius.pillAll),
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        isTerminal ? 'Thanks for using Soko Fetch.' : subtitle,
-                        style: const TextStyle(color: AppTheme.mgray),
-                      ),
+                      Text(_headlines[status] ?? orderStatusStyle(status).$1,
+                          style: text.headlineSmall),
+                      const SizedBox(height: SfSpace.xxs),
+                      Text(_subline, style: text.bodyLarge!.copyWith(color: SfColors.inkMuted)),
+                      if (status != 'cancelled' && status != 'delivery_failed') ...[
+                        const SizedBox(height: SfSpace.md),
+                        _Progress(step: _stepFor(status)),
+                      ],
+                      if (_tracking?.courierAssigned == true &&
+                          status != 'delivered') ...[
+                        const SizedBox(height: SfSpace.lg),
+                        Row(children: [
+                          InitialsAvatar(name: _tracking?.courierName ?? 'Rider'),
+                          const SizedBox(width: SfSpace.sm),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(_tracking?.courierName ?? 'Your rider',
+                                    style: text.titleSmall),
+                                if (_tracking?.vehicleType != null)
+                                  Text(
+                                      _tracking!.vehicleType!.replaceAll('_', ' '),
+                                      style: text.bodyMedium),
+                              ],
+                            ),
+                          ),
+                        ]),
+                      ],
+                      if (_deliveryCode != null && !_isTerminal) ...[
+                        const SizedBox(height: SfSpace.lg),
+                        _DeliveryCodeCard(code: _deliveryCode!),
+                      ],
+                      if (order?.canRate == true) ...[
+                        const SizedBox(height: SfSpace.lg),
+                        SfButton.primary(
+                          label: 'Rate your order',
+                          icon: Icons.star_outline_rounded,
+                          onPressed: () => Navigator.pushReplacementNamed(
+                              context, '/customer/rate-order',
+                              arguments: _orderId),
+                        ),
+                      ],
+                      if (order != null) ...[
+                        const SizedBox(height: SfSpace.lg),
+                        const Divider(),
+                        const SizedBox(height: SfSpace.md),
+                        Text(order.merchantName ?? 'Your order', style: text.titleMedium),
+                        const SizedBox(height: SfSpace.xs),
+                        for (final raw in order.items)
+                          if (raw is Map)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(children: [
+                                SizedBox(
+                                    width: 32,
+                                    child: Text('${raw['qty']}×', style: text.bodyMedium)),
+                                Expanded(
+                                    child: Text('${raw['name']}', style: text.bodyLarge)),
+                                Text(formatKes(parseNum(raw['subtotal'])),
+                                    style: text.bodyLarge),
+                              ]),
+                            ),
+                        const SizedBox(height: SfSpace.xs),
+                        Row(children: [
+                          Expanded(child: Text('Delivery', style: text.bodyMedium)),
+                          Text(formatKes(order.deliveryFee), style: text.bodyMedium),
+                        ]),
+                        const SizedBox(height: SfSpace.xxs),
+                        Row(children: [
+                          Expanded(child: Text('Total', style: text.titleSmall)),
+                          Text(formatKes(order.total), style: text.titleSmall),
+                        ]),
+                        const SizedBox(height: SfSpace.md),
+                        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          const Icon(Icons.place_outlined, size: 20, color: SfColors.inkMuted),
+                          const SizedBox(width: SfSpace.xs),
+                          Expanded(child: Text(order.deliveryAddress, style: text.bodyMedium)),
+                        ]),
+                      ],
                     ],
                   ),
-                ),
-                Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: AppTheme.primaryFixed,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child:
-                      const Icon(Icons.timer_rounded, color: AppTheme.accent),
-                ),
-              ],
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+/// Four segments: placed, preparing, on the way, delivered.
+class _Progress extends StatelessWidget {
+  const _Progress({required this.step});
+  final int step;
+
+  @override
+  Widget build(BuildContext context) => Row(children: [
+        for (var i = 0; i < 4; i++)
+          Expanded(
+            child: Container(
+              height: 4,
+              margin: EdgeInsets.only(right: i < 3 ? SfSpace.xxs : 0),
+              decoration: BoxDecoration(
+                color: i <= step ? SfColors.ink : SfColors.surface3,
+                borderRadius: SfRadius.pillAll,
+              ),
             ),
-            const SizedBox(height: 20),
-            _ProgressSteps(progress: progress),
-            const SizedBox(height: 18),
-            if (deliveryCode != null && !isTerminal) ...[
-              _SummaryRow(
-                icon: Icons.lock_outline_rounded,
-                label: 'Delivery code — give this to your rider',
-                value: deliveryCode!,
-              ),
-              const SizedBox(height: 10),
-            ],
-            if (order != null) ...[
-              _SummaryRow(
-                icon: Icons.receipt_long_rounded,
-                label: 'Order total',
-                value: 'KES ${order!.total.toStringAsFixed(0)}',
-              ),
-              const SizedBox(height: 10),
-              _SummaryRow(
-                icon: Icons.home_rounded,
-                label: 'Delivery address',
-                value: order!.deliveryAddress,
-              ),
-            ],
-            if (onRate != null) ...[
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: onRate,
-                icon: const Icon(Icons.star_outline_rounded),
-                label: const Text('Rate your experience'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
+          ),
+      ]);
 }
 
-class _ProgressSteps extends StatelessWidget {
-  final double progress;
-
-  const _ProgressSteps({required this.progress});
+class _DeliveryCodeCard extends StatelessWidget {
+  const _DeliveryCodeCard({required this.code});
+  final String code;
 
   @override
   Widget build(BuildContext context) {
-    const labels = ['Placed', 'Prepping', 'Shipping', 'Delivered'];
-    return Column(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(999),
-          child: LinearProgressIndicator(
-            value: progress,
-            minHeight: 5,
-            backgroundColor: AppTheme.surfaceHigh,
-            valueColor: const AlwaysStoppedAnimation(AppTheme.accent),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            for (var i = 0; i < labels.length; i++)
-              Text(
-                labels[i],
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: i / (labels.length - 1) <= progress
-                      ? FontWeight.w800
-                      : FontWeight.w500,
-                  color: i / (labels.length - 1) <= progress
-                      ? AppTheme.accent
-                      : AppTheme.mgray,
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _SummaryRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const _SummaryRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 38,
-          height: 38,
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceContainer,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Icon(icon, color: AppTheme.teal, size: 20),
-        ),
-        const SizedBox(width: 12),
+    final text = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.all(SfSpace.md),
+      decoration: const BoxDecoration(
+          color: SfColors.surface2, borderRadius: SfRadius.mdAll),
+      child: Row(children: [
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: const TextStyle(color: AppTheme.mgray, fontSize: 12)),
-              Text(
-                value,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Delivery code', style: text.titleSmall),
+            const SizedBox(height: 2),
+            Text('Give this to your rider when your order arrives',
+                style: text.bodySmall),
+          ]),
         ),
-      ],
+        Text(code,
+            style: text.displaySmall!.copyWith(letterSpacing: 4),
+            semanticsLabel: 'Delivery code ${code.split('').join(' ')}'),
+      ]),
     );
   }
 }

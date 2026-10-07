@@ -1,9 +1,11 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../core/theme.dart';
+
 import '../../../../core/api_client.dart';
+import '../../../../core/errors.dart';
+import '../../../../core/ui/ui.dart';
 import '../../providers/providers.dart';
+import '../../widgets/address_sheet.dart';
 
 class CheckoutScreen extends ConsumerStatefulWidget {
   const CheckoutScreen({super.key});
@@ -12,220 +14,213 @@ class CheckoutScreen extends ConsumerStatefulWidget {
 }
 
 class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
-  final _addressCtrl = TextEditingController();
-  String _paymentMethod = 'mpesa';
+  final _typedAddress = TextEditingController();
+  final _note = TextEditingController();
+  bool _typeAddress = false; // Use a one-off typed address instead of a saved one
   bool _placing = false;
   String? _error;
 
   @override
-  void initState() {
-    super.initState();
-  }
-
-  @override
   void dispose() {
-    _addressCtrl.dispose();
+    _typedAddress.dispose();
+    _note.dispose();
     super.dispose();
   }
 
   Future<void> _placeOrder() async {
-    if (_addressCtrl.text.trim().isEmpty) {
-      setState(() => _error = 'Please enter a delivery address.');
+    final saved = ref.read(selectedAddressProvider);
+    final useTyped = _typeAddress || saved == null;
+    final address = useTyped ? _typedAddress.text.trim() : saved.fullAddress;
+    if (address.length < 5) {
+      setState(() => _error = 'Add the address to deliver to.');
       return;
     }
 
-    final cart        = ref.read(cartProvider);
-    final cartNotifier = ref.read(cartProvider.notifier);
-
-    if (cart.isEmpty || cartNotifier.merchantId == null) return;
+    final cart = ref.read(cartProvider);
+    final notifier = ref.read(cartProvider.notifier);
+    if (cart.isEmpty || notifier.merchantId == null) return;
 
     setState(() { _placing = true; _error = null; });
-
     try {
+      final note = [
+        if (!useTyped && saved.instructions != null) saved.instructions!,
+        if (_note.text.trim().isNotEmpty) _note.text.trim(),
+      ].join(' · ');
       final resp = await ApiClient.instance.post('/orders', data: {
-        'merchant_id':      cartNotifier.merchantId,
-        'items': cart.map((c) => {
-              'item_id':  c.item.id,
-              'quantity': c.quantity,
-            }).toList(),
-        'delivery_address': _addressCtrl.text.trim(),
-        'payment_method':   _paymentMethod,
+        'merchant_id': notifier.merchantId,
+        'items': [
+          for (final c in cart) {'item_id': c.item.id, 'quantity': c.quantity},
+        ],
+        'delivery_address': address,
+        if (!useTyped && saved.latitude != null) 'delivery_latitude': saved.latitude,
+        if (!useTyped && saved.longitude != null) 'delivery_longitude': saved.longitude,
+        if (note.isNotEmpty) 'delivery_notes': note,
+        'payment_method': 'mpesa',
       });
-
       final orderId = (resp.data as Map)['id'] as String;
-      cartNotifier.clear();
-
+      notifier.clear();
+      ref.invalidate(ordersProvider);
       if (!mounted) return;
-      if (_paymentMethod == 'mpesa') {
-        Navigator.pushReplacementNamed(context, '/customer/mpesa-payment',
-            arguments: orderId);
-      } else {
-        Navigator.pushReplacementNamed(context, '/customer/tracking',
-            arguments: orderId);
+      Navigator.pushReplacementNamed(context, '/customer/mpesa-payment',
+          arguments: orderId);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = errorMessage(e, "Couldn't place the order. Please try again.");
+          _placing = false;
+        });
       }
-    } on DioException catch (e) {
-      final msg = (e.response?.data as Map?)?['detail']?['message']
-          as String? ?? 'Failed to place order.';
-      setState(() { _error = msg; _placing = false; });
-    } catch (_) {
-      setState(() { _error = 'Something went wrong.'; _placing = false; });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final cart        = ref.watch(cartProvider);
-    final cartNotifier = ref.read(cartProvider.notifier);
+    final text = Theme.of(context).textTheme;
+    final cart = ref.watch(cartProvider);
+    final notifier = ref.read(cartProvider.notifier);
+    final saved = ref.watch(selectedAddressProvider);
+    final addressesLoading = ref.watch(addressesProvider).isLoading;
+    final typed = _typeAddress || (saved == null && !addressesLoading);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Checkout')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          // Order summary
-          _Section(
-            title: 'Order Summary',
-            child: Column(
-              children: [
-                ...cart.map((c) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('${c.item.name} ×${c.quantity}',
-                              style: const TextStyle(fontSize: 13)),
-                          Text('KES ${c.lineTotal.toStringAsFixed(0)}',
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 13)),
-                        ],
-                      ),
-                    )),
-                const Divider(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Subtotal',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    Text('KES ${cartNotifier.subtotal.toStringAsFixed(0)}',
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ],
-            ),
+      bottomNavigationBar: Column(mainAxisSize: MainAxisSize.min, children: [
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(SfSpace.md, SfSpace.xs, SfSpace.md, 0),
+            child: InlineMessage(_error!),
           ),
-          const SizedBox(height: 16),
-          // Delivery address
-          _Section(
-            title: 'Delivery Address',
-            child: TextField(
-              controller: _addressCtrl,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                hintText: 'Enter your delivery address',
-                prefixIcon: Icon(Icons.location_on_outlined),
+        BottomCtaBar(
+          label: 'Place order',
+          loading: _placing,
+          onPressed: cart.isEmpty ? null : _placeOrder,
+        ),
+      ]),
+      body: MaxWidth(
+        child: ListView(
+          children: [
+            // ── Delivery ─────────────────────────────────────────────────
+            const SectionHeader('Delivery'),
+            if (!typed && saved != null)
+              ListRow(
+                leading: const _RoundIcon(Icons.place_outlined),
+                title: saved.label,
+                subtitle: saved.fullAddress,
+                trailing: TextButton(
+                  onPressed: () => showAddressSheet(context),
+                  child: const Text('Change'),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: SfSpace.md),
+                child: TextField(
+                  controller: _typedAddress,
+                  maxLines: 2,
+                  minLines: 1,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    hintText: 'Street, building, house number',
+                    prefixIcon: Icon(Icons.place_outlined),
+                  ),
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: SfSpace.xs),
+              child: Wrap(children: [
+                if (saved != null)
+                  TextButton(
+                    onPressed: () => setState(() => _typeAddress = !_typeAddress),
+                    child: Text(typed ? 'Use a saved address' : 'Type another address'),
+                  ),
+                TextButton(
+                  onPressed: () => showAddressSheet(context),
+                  child: const Text('Save an address'),
+                ),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                  SfSpace.md, 0, SfSpace.md, SfSpace.md),
+              child: TextField(
+                controller: _note,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  hintText: 'Note for the rider (optional)',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          // Payment method
-          _Section(
-            title: 'Payment Method',
-            child: Column(
-              children: [
-                _PaymentOption(
-                  value: 'mpesa',
-                  groupValue: _paymentMethod,
-                  label: 'M-Pesa',
-                  icon: Icons.phone_android,
-                  onChanged: (v) => setState(() => _paymentMethod = v!),
+            const SectionGap(),
+
+            // ── Payment ──────────────────────────────────────────────────
+            const SectionHeader('Payment'),
+            const ListRow(
+              leading: _RoundIcon(Icons.phone_iphone_rounded),
+              title: 'M-Pesa',
+              subtitle: "You'll approve the payment on your phone",
+              trailing: Icon(Icons.check_circle_rounded, color: SfColors.ink),
+            ),
+            // Card stays hidden until card payments are verified server-side
+            const SizedBox(height: SfSpace.sm),
+            const SectionGap(),
+
+            // ── Summary ──────────────────────────────────────────────────
+            const SectionHeader('Order summary'),
+            for (final c in cart)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: SfSpace.md, vertical: SfSpace.xxs),
+                child: Row(children: [
+                  SizedBox(
+                      width: 32,
+                      child: Text('${c.quantity}×', style: text.bodyMedium)),
+                  Expanded(child: Text(c.item.name, style: text.bodyLarge)),
+                  Text(formatKes(c.lineTotal), style: text.bodyLarge),
+                ]),
+              ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: SfSpace.sm),
+              child: Divider(indent: SfSpace.md, endIndent: SfSpace.md),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: SfSpace.md),
+              child: Column(children: [
+                Row(children: [
+                  Expanded(child: Text('Subtotal', style: text.titleSmall)),
+                  Text(formatKes(notifier.subtotal), style: text.titleSmall),
+                ]),
+                const SizedBox(height: SfSpace.xxs),
+                Row(children: [
+                  Expanded(child: Text('Delivery fee', style: text.bodyMedium)),
+                  Text('Added when you order', style: text.bodyMedium),
+                ]),
+                const SizedBox(height: SfSpace.md),
+                Text(
+                  "You'll see the full total, including delivery, before you pay. "
+                  'A rider is sent once the payment goes through.',
+                  style: text.bodySmall,
                 ),
-                // Card is hidden until the Flutterwave SDK + /payments/card/verify
-                // are wired up — selecting it used to skip payment entirely.
-              ],
+              ]),
             ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                  color: AppTheme.accent.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Text(_error!,
-                  style: const TextStyle(color: AppTheme.accent)),
-            ),
+            const SizedBox(height: SfSpace.lg),
           ],
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: _placing ? null : _placeOrder,
-            style: ElevatedButton.styleFrom(
-                minimumSize: const Size.fromHeight(54)),
-            child: _placing
-                ? const SizedBox(
-                    width: 22, height: 22,
-                    child: CircularProgressIndicator(
-                        color: Colors.white, strokeWidth: 2.5))
-                : const Text('Place Order',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          ),
-          const SizedBox(height: 16),
-          const Center(
-            child: Text('Payment is collected before your rider is dispatched.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: AppTheme.mgray, fontSize: 12)),
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
-class _Section extends StatelessWidget {
-  final String title;
-  final Widget child;
-  const _Section({required this.title, required this.child});
+class _RoundIcon extends StatelessWidget {
+  const _RoundIcon(this.icon);
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(title,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-          const SizedBox(height: 12),
-          child,
-        ]),
+        width: 40,
+        height: 40,
+        decoration:
+            const BoxDecoration(color: SfColors.surface2, shape: BoxShape.circle),
+        child: Icon(icon, size: 20),
       );
 }
-
-class _PaymentOption extends StatelessWidget {
-  final String value;
-  final String groupValue;
-  final String label;
-  final IconData icon;
-  final ValueChanged<String?> onChanged;
-  const _PaymentOption(
-      {required this.value,
-      required this.groupValue,
-      required this.label,
-      required this.icon,
-      required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) => RadioListTile<String>(
-        value: value,
-        groupValue: groupValue,
-        onChanged: onChanged,
-        activeColor: AppTheme.accent,
-        title: Row(children: [
-          Icon(icon, size: 20, color: AppTheme.mgray),
-          const SizedBox(width: 8),
-          Text(label),
-        ]),
-        contentPadding: EdgeInsets.zero,
-      );
-}
-

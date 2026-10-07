@@ -51,6 +51,27 @@ class CartNotifier extends StateNotifier<List<CartItem>> {
     _merchantId = null;
   }
 
+  /// Sets an item's quantity, adding it if needed (0 removes it).
+  void setQuantity(MenuItem item, String merchantId, int qty) {
+    if (qty <= 0) return removeItem(item.id);
+    if (quantityOf(item.id) == 0) addItem(item, merchantId);
+    updateQuantity(item.id, qty);
+  }
+
+  /// Replaces the cart, e.g. when reordering.
+  void replaceWith(String merchantId, List<CartItem> items) {
+    _merchantId = items.isEmpty ? null : merchantId;
+    state = items;
+  }
+
+  int quantityOf(String itemId) => state
+      .where((c) => c.item.id == itemId)
+      .fold(0, (sum, c) => sum + c.quantity);
+
+  /// True if adding from [merchantId] would replace another shop's cart.
+  bool belongsToOtherShop(String merchantId) =>
+      state.isNotEmpty && _merchantId != null && _merchantId != merchantId;
+
   double get subtotal =>
       state.fold(0.0, (sum, c) => sum + c.lineTotal);
 
@@ -89,3 +110,28 @@ final orderDetailProvider = FutureProvider.family<Order, String>((ref, orderId) 
   final resp = await ApiClient.instance.get('/orders/$orderId');
   return Order.fromJson(resp.data as Map<String, dynamic>);
 });
+
+// ── Profile and saved addresses ──────────────────────────────────────────────
+final customerProfileProvider = FutureProvider<CustomerProfile>((ref) async {
+  final resp = await ApiClient.instance.get('/customer/me');
+  return CustomerProfile.fromJson(resp.data as Map<String, dynamic>);
+});
+
+final addressesProvider = FutureProvider<List<DeliveryAddress>>((ref) async {
+  final resp = await ApiClient.instance.get('/customer/addresses');
+  return (resp.data as List<dynamic>)
+      .map((e) => DeliveryAddress.fromJson(e as Map<String, dynamic>))
+      .toList();
+});
+
+/// The address the customer is ordering to. Null: their default (or first).
+final selectedAddressIdProvider = StateProvider<String?>((ref) => null);
+
+final selectedAddressProvider = Provider<DeliveryAddress?>((ref) {
+  final list = ref.watch(addressesProvider).valueOrNull ?? const [];
+  if (list.isEmpty) return null;
+  final id = ref.watch(selectedAddressIdProvider);
+  return list.firstWhere((a) => a.id == id,
+      orElse: () => list.firstWhere((a) => a.isDefault, orElse: () => list.first));
+});
+

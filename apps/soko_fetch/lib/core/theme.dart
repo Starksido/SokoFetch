@@ -244,14 +244,4 @@ class AppTheme {
       ),
     );
   }
-
-  /// Temporary: the customer screens were built expecting full-width
-  /// buttons. Removed when the customer area moves to the new components.
-  static ThemeData get customer => light.copyWith(
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: light.elevatedButtonTheme.style!.copyWith(
-            minimumSize: const WidgetStatePropertyAll(Size.fromHeight(52)),
-          ),
-        ),
-      );
 }
